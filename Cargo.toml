@@ -11,3 +11,4 @@ keywords = ["mpmc", "channel", "asynchronous", "ring"]
 categories = ["asynchronous"]
 
 [dependencies]
+crossbeam-queue = "0.1.2"
