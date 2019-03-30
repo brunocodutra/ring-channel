@@ -1,0 +1,41 @@
+language: rust
+
+rust:
+- stable
+- nightly
+
+os:
+- linux
+- osx
+- windows
+
+stages:
+- check
+- test
+
+jobs:
+  include:
+  - name: fmt
+    stage: check
+    rust: stable
+    os: linux
+    install:
+    - rustup component add rustfmt
+    script:
+    - cargo fmt --all -- --check
+
+  - name: clippy
+    stage: check
+    rust: stable
+    os: linux
+    install:
+    - rustup component add clippy
+    script:
+    - cargo clippy --all-targets -- -D warnings
+
+  - name: doc
+    stage: check
+    rust: nightly
+    os: linux
+    script:
+    - cargo +nightly doc --all-features
