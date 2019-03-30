@@ -13,6 +13,11 @@ stages:
 - check
 - test
 
+addons:
+  apt:
+    packages:
+      - libssl-dev
+
 jobs:
   include:
   - name: fmt
@@ -32,6 +37,17 @@ jobs:
     - rustup component add clippy
     script:
     - cargo clippy --all-targets -- -D warnings
+
+  - name: coverage
+    stage: check
+    rust: nightly
+    os: linux
+    install:
+    - RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo +nightly install cargo-tarpaulin
+    script:
+    - cargo +nightly tarpaulin -v --all-features --out Xml
+    after_success:
+    - bash <(curl -s https://codecov.io/bash)
 
   - name: doc
     stage: check
