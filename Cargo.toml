@@ -12,3 +12,4 @@ categories = ["asynchronous"]
 
 [dependencies]
 crossbeam-queue = "0.1.2"
+derivative = "1.0.2"
