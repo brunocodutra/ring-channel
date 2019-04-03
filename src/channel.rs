@@ -1,4 +1,4 @@
-use crate::buffer::*;
+use crate::{buffer::*, same};
 use derivative::Derivative;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -20,6 +20,10 @@ impl<T> ControlBlock<T> {
             connected: AtomicBool::new(true),
             buffer: Buffer::new(capacity),
         }
+    }
+
+    unsafe fn delete(&self) {
+        Box::from_raw(self as *const Self as *mut Self);
     }
 }
 
@@ -50,6 +54,25 @@ impl<T> Deref for Endpoint<T> {
         };
 
         unsafe { &*ptr }
+    }
+}
+
+pub struct RingChannel<T>(pub Endpoint<T>, pub Endpoint<T>);
+
+impl<T> RingChannel<T> {
+    pub fn new(capacity: usize) -> Self {
+        let ctrl = Box::into_raw(Box::new(ControlBlock::new(capacity)));
+        RingChannel(Endpoint::Left(ctrl), Endpoint::Right(ctrl))
+    }
+}
+
+impl<T> Deref for RingChannel<T> {
+    type Target = ControlBlock<T>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        let RingChannel(l, r) = self;
+        same!(l as &Self::Target, r as &Self::Target)
     }
 }
 
@@ -84,5 +107,20 @@ mod tests {
             let ctrl = ControlBlock::<()>::new(cap);
             assert_eq!(ctrl.buffer.capacity(), cap);
         }
+    }
+
+    fn given_ring_channel<T, F: FnOnce(RingChannel<T>)>(capacity: usize, then: F) {
+        let channel = RingChannel::<T>::new(capacity);
+        let ctrl: *const ControlBlock<T> = &*channel;
+        then(channel);
+        unsafe { (*ctrl).delete() };
+    }
+
+    #[test]
+    fn ring_channel_holds_endpoints_of_the_same_control_block() {
+        given_ring_channel(1, |RingChannel::<()>(l, r)| {
+            assert_eq!(&l as &ControlBlock<_>, &r as &ControlBlock<_>);
+            assert_ne!(l, r);
+        });
     }
 }
