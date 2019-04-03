@@ -57,6 +57,23 @@ impl<T> Deref for Endpoint<T> {
     }
 }
 
+impl<T> Clone for Endpoint<T> {
+    fn clone(&self) -> Self {
+        use Endpoint::*;
+        match *self {
+            Left(ptr) => {
+                self.left.fetch_add(1, Ordering::Relaxed);
+                Left(ptr)
+            }
+
+            Right(ptr) => {
+                self.right.fetch_add(1, Ordering::Relaxed);
+                Right(ptr)
+            }
+        }
+    }
+}
+
 pub struct RingChannel<T>(pub Endpoint<T>, pub Endpoint<T>);
 
 impl<T> RingChannel<T> {
@@ -121,6 +138,24 @@ mod tests {
         given_ring_channel(1, |RingChannel::<()>(l, r)| {
             assert_eq!(&l as &ControlBlock<_>, &r as &ControlBlock<_>);
             assert_ne!(l, r);
+        });
+    }
+
+    #[test]
+    fn cloning_left_endpoint_increments_left_counter() {
+        given_ring_channel(1, |RingChannel::<()>(l, _r)| {
+            let x = l.clone();
+            assert_eq!(x.left.load(Ordering::Relaxed), 2);
+            assert_eq!(x.right.load(Ordering::Relaxed), 1);
+        });
+    }
+
+    #[test]
+    fn cloning_right_endpoint_increments_right_counter() {
+        given_ring_channel(1, |RingChannel::<()>(_l, r)| {
+            let x = r.clone();
+            assert_eq!(x.left.load(Ordering::Relaxed), 1);
+            assert_eq!(x.right.load(Ordering::Relaxed), 2);
         });
     }
 }
