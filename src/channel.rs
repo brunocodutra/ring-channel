@@ -31,6 +31,28 @@ impl<T> PartialEq for ControlBlock<T> {
     }
 }
 
+#[derive(Derivative, Eq, PartialEq)]
+#[derivative(Debug(bound = ""))]
+pub enum Endpoint<T> {
+    Left(*const ControlBlock<T>),
+    Right(*const ControlBlock<T>),
+}
+
+impl<T> Deref for Endpoint<T> {
+    type Target = ControlBlock<T>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        use Endpoint::*;
+        let ptr = match *self {
+            Left(ptr) => ptr,
+            Right(ptr) => ptr,
+        };
+
+        unsafe { &*ptr }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
