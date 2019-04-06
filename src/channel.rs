@@ -1,4 +1,4 @@
-use crate::{buffer::*, same};
+use crate::{buffer::*, error::*, same};
 use derivative::Derivative;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -37,6 +37,19 @@ impl<T> ControlBlock<T> {
         assert!(self.dropped.load(Ordering::Relaxed));
 
         Box::from_raw(self as *const Self as *mut Self);
+    }
+
+    pub fn send(&self, mut value: T) -> Result<(), SendError<T>> {
+        if !self.connected.load(Ordering::Relaxed) {
+            return Err(SendError::Disconnected(value));
+        }
+
+        while let Some(v) = self.buffer.push(value) {
+            self.buffer.pop();
+            value = v;
+        }
+
+        Ok(())
     }
 }
 
@@ -139,8 +152,9 @@ impl<T> Deref for RingChannel<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
+    use proptest::{collection::vec, prelude::*};
     use rayon::{iter::repeatn, prelude::*};
+    use std::cmp::min;
 
     #[test]
     fn control_block_has_object_identity() {
@@ -271,6 +285,44 @@ mod tests {
                 let ls = repeatn((), m).map(|_| l.clone());
                 let rs = repeatn((), n).map(|_| r.clone());
                 ls.chain(rs).for_each(drop);
+            });
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn send_succeeds_on_connected_channel(cap in 1..=100usize, msgs in vec("[a-z]", 1..=100)) {
+            given_ring_channel(cap, move |RingChannel(l, _)| {
+                repeatn(l, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(c, msg)| {
+                    assert_eq!(c.send(msg), Ok(()));
+                });
+            });
+        }
+
+        #[test]
+        fn send_fails_on_disconnected_channel(cap in 1..=100usize, msgs in vec("[a-z]", 1..=100)) {
+            given_ring_channel(cap, move |RingChannel(l, r)| {
+                drop(r);
+                repeatn(l, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(c, msg)| {
+                    assert_eq!(c.send(msg.clone()), Err(SendError::Disconnected(msg)));
+                });
+            });
+        }
+
+        #[test]
+        fn send_overwrites_old_messages(cap in 1..=100usize, mut msgs in vec("[a-z]", 1..=100)) {
+            given_ring_channel(cap, move |RingChannel(l, r)| {
+                for msg in msgs.iter().cloned() {
+                    assert_eq!(l.send(msg), Ok(()));
+                }
+
+                let mut sent = Vec::with_capacity(msgs.len());
+                while let Some(msg) = r.buffer.pop() {
+                    sent.push(msg);
+                }
+
+                let overwritten = msgs.len() - min(msgs.len(), cap);
+                assert_eq!(sent, msgs.drain(..).skip(overwritten).collect::<Vec<_>>());
             });
         }
     }
