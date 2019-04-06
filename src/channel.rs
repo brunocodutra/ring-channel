@@ -10,6 +10,9 @@ pub struct ControlBlock<T> {
     right: AtomicUsize,
     connected: AtomicBool,
     buffer: Buffer<T>,
+
+    #[cfg(test)]
+    dropped: AtomicBool,
 }
 
 impl<T> ControlBlock<T> {
@@ -19,10 +22,20 @@ impl<T> ControlBlock<T> {
             right: AtomicUsize::new(1),
             connected: AtomicBool::new(true),
             buffer: Buffer::new(capacity),
+
+            #[cfg(test)]
+            dropped: AtomicBool::new(false),
         }
     }
 
     unsafe fn delete(&self) {
+        debug_assert!(self.left.load(Ordering::Relaxed) == 0);
+        debug_assert!(self.right.load(Ordering::Relaxed) == 0);
+        debug_assert!(!self.connected.load(Ordering::Relaxed));
+
+        #[cfg(test)]
+        assert!(self.dropped.load(Ordering::Relaxed));
+
         Box::from_raw(self as *const Self as *mut Self);
     }
 }
@@ -53,6 +66,9 @@ impl<T> Deref for Endpoint<T> {
             Right(ptr) => ptr,
         };
 
+        #[cfg(test)]
+        assert!(!unsafe { &*ptr }.dropped.load(Ordering::Relaxed));
+
         unsafe { &*ptr }
     }
 }
@@ -69,6 +85,30 @@ impl<T> Clone for Endpoint<T> {
             Right(ptr) => {
                 self.right.fetch_add(1, Ordering::Relaxed);
                 Right(ptr)
+            }
+        }
+    }
+}
+
+impl<T> Drop for Endpoint<T> {
+    fn drop(&mut self) {
+        use Endpoint::*;
+        let disconnect = match *self {
+            // synchronizes with other left endpoints
+            Left(_) => self.left.fetch_sub(1, Ordering::AcqRel) == 1,
+
+            // synchronizes with other right endpoints
+            Right(_) => self.right.fetch_sub(1, Ordering::AcqRel) == 1,
+        };
+
+        // synchronizes the last left and right endpoints with each other
+        if disconnect && !self.connected.swap(false, Ordering::AcqRel) {
+            #[cfg(test)]
+            self.dropped.store(true, Ordering::Release);
+
+            #[cfg(not(test))]
+            unsafe {
+                self.delete();
             }
         }
     }
@@ -156,6 +196,58 @@ mod tests {
             let x = r.clone();
             assert_eq!(x.left.load(Ordering::Relaxed), 1);
             assert_eq!(x.right.load(Ordering::Relaxed), 2);
+        });
+    }
+
+    #[test]
+    fn dropping_left_endpoint_decrements_left_counter() {
+        given_ring_channel(1, |RingChannel::<()>(l, r)| {
+            drop(l);
+            assert_eq!(r.left.load(Ordering::Relaxed), 0);
+            assert_eq!(r.right.load(Ordering::Relaxed), 1);
+        });
+    }
+
+    #[test]
+    fn dropping_right_endpoint_decrements_right_counter() {
+        given_ring_channel(1, |RingChannel::<()>(l, r)| {
+            drop(r);
+            assert_eq!(l.left.load(Ordering::Relaxed), 1);
+            assert_eq!(l.right.load(Ordering::Relaxed), 0);
+        });
+    }
+
+    #[test]
+    fn channel_is_disconnected_if_there_are_no_left_endpoints() {
+        given_ring_channel(1, |RingChannel::<()>(l, r)| {
+            drop(l);
+            assert_eq!(r.left.load(Ordering::Relaxed), 0);
+            assert_eq!(r.connected.load(Ordering::Relaxed), false);
+        });
+    }
+
+    #[test]
+    fn channel_is_disconnected_if_there_are_no_right_endpoints() {
+        given_ring_channel(1, |RingChannel::<()>(l, r)| {
+            drop(r);
+            assert_eq!(l.right.load(Ordering::Relaxed), 0);
+            assert_eq!(l.connected.load(Ordering::Relaxed), false);
+        });
+    }
+
+    #[test]
+    fn control_block_is_not_dropped_if_there_are_left_endpoints() {
+        given_ring_channel(1, |RingChannel::<()>(l, r)| {
+            drop(r);
+            assert_eq!(l.dropped.load(Ordering::Relaxed), false);
+        });
+    }
+
+    #[test]
+    fn control_block_is_not_dropped_if_there_are_right_endpoints() {
+        given_ring_channel(1, |RingChannel::<()>(l, r)| {
+            drop(l);
+            assert_eq!(r.dropped.load(Ordering::Relaxed), false);
         });
     }
 }
