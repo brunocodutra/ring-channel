@@ -55,6 +55,9 @@ pub enum Endpoint<T> {
     Right(*const ControlBlock<T>),
 }
 
+unsafe impl<T: Send> Send for Endpoint<T> {}
+unsafe impl<T: Send> Sync for Endpoint<T> {}
+
 impl<T> Deref for Endpoint<T> {
     type Target = ControlBlock<T>;
 
@@ -137,6 +140,7 @@ impl<T> Deref for RingChannel<T> {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use rayon::{iter::repeatn, prelude::*};
 
     #[test]
     fn control_block_has_object_identity() {
@@ -249,5 +253,25 @@ mod tests {
             drop(l);
             assert_eq!(r.dropped.load(Ordering::Relaxed), false);
         });
+    }
+
+    proptest! {
+        #[test]
+        fn endpoints_are_safe_to_send_across_threads(m in 1..=100usize, n in 1..=100usize) {
+            given_ring_channel(1, |RingChannel::<()>(l, r)| {
+                let ls = repeatn(l, m);
+                let rs = repeatn(r, n);
+                ls.chain(rs).for_each(drop);
+            });
+        }
+
+        #[test]
+        fn endpoints_are_safe_to_share_across_threads(m in 1..=100usize, n in 1..=100usize) {
+            given_ring_channel(1, |RingChannel::<()>(l, r)| {
+                let ls = repeatn((), m).map(|_| l.clone());
+                let rs = repeatn((), n).map(|_| r.clone());
+                ls.chain(rs).for_each(drop);
+            });
+        }
     }
 }
