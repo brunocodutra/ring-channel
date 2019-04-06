@@ -51,6 +51,16 @@ impl<T> ControlBlock<T> {
 
         Ok(())
     }
+
+    pub fn recv(&self) -> Result<T, RecvError> {
+        self.buffer.pop().ok_or_else(|| {
+            if !self.connected.load(Ordering::Relaxed) {
+                RecvError::Disconnected
+            } else {
+                RecvError::Empty
+            }
+        })
+    }
 }
 
 impl<T> Eq for ControlBlock<T> {}
@@ -323,6 +333,72 @@ mod tests {
 
                 let overwritten = msgs.len() - min(msgs.len(), cap);
                 assert_eq!(sent, msgs.drain(..).skip(overwritten).collect::<Vec<_>>());
+            });
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn recv_succeeds_on_non_empty_connected_channel(msgs in vec("[a-z]", 1..=100)) {
+            given_ring_channel(msgs.len(), move |RingChannel(l, r)| {
+                for msg in msgs.iter().cloned().enumerate() {
+                    l.buffer.push(msg);
+                }
+
+                let mut received = vec![(0usize, Default::default()); msgs.len()];
+
+                repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
+                    match c.recv() {
+                        Ok(msg) => *slot = msg,
+                        Err(e) => panic!(e),
+                    };
+                });
+
+                received.sort_by_key(|(k, _)| *k);
+                assert_eq!(received.drain(..).map(|(_, v)| v).collect::<Vec<_>>(), msgs);
+            });
+        }
+
+        #[test]
+        fn recv_succeeds_on_non_empty_disconnected_channel(msgs in vec("[a-z]", 1..=100)) {
+            given_ring_channel(msgs.len(), move |RingChannel(l, r)| {
+                drop(r);
+
+                for msg in msgs.iter().cloned().enumerate() {
+                    l.buffer.push(msg);
+                }
+
+                let mut received = vec![(0usize, Default::default()); msgs.len()];
+
+                repeatn(l, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
+                    match c.recv() {
+                        Ok(msg) => *slot = msg,
+                        Err(e) => panic!(e),
+                    };
+                });
+
+                received.sort_by_key(|(k, _)| *k);
+                assert_eq!(received.drain(..).map(|(_, v)| v).collect::<Vec<_>>(), msgs);
+            });
+        }
+
+        #[test]
+        fn recv_fails_on_empty_connected_channel(cap in 1..=100usize, n in 1..=100usize) {
+            given_ring_channel(cap, move |channel: RingChannel<()>| {
+                repeatn((), n).for_each(move |_| {
+                    assert_eq!(channel.recv(), Err(RecvError::Empty));
+                });
+            });
+        }
+
+        #[test]
+        fn recv_fails_on_empty_disconnected_channel(cap in 1..=100usize, n in 1..=100usize) {
+            given_ring_channel(cap, move |RingChannel::<()>(l, r)| {
+                drop(r);
+
+                repeatn((), n).for_each(move |_| {
+                    assert_eq!(l.recv(), Err(RecvError::Disconnected));
+                });
             });
         }
     }
