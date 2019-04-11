@@ -9,7 +9,7 @@ pub struct ControlBlock<T> {
     left: AtomicUsize,
     right: AtomicUsize,
     connected: AtomicBool,
-    buffer: Buffer<T>,
+    buffer: RingBuffer<T>,
 
     #[cfg(test)]
     dropped: AtomicBool,
@@ -21,7 +21,7 @@ impl<T> ControlBlock<T> {
             left: AtomicUsize::new(1),
             right: AtomicUsize::new(1),
             connected: AtomicBool::new(true),
-            buffer: Buffer::new(capacity),
+            buffer: RingBuffer::new(capacity),
 
             #[cfg(test)]
             dropped: AtomicBool::new(false),
@@ -39,17 +39,13 @@ impl<T> ControlBlock<T> {
         Box::from_raw(self as *const Self as *mut Self);
     }
 
-    pub fn send(&self, mut value: T) -> Result<(), SendError<T>> {
-        if !self.connected.load(Ordering::Relaxed) {
-            return Err(SendError::Disconnected(value));
+    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+        if self.connected.load(Ordering::Relaxed) {
+            self.buffer.push(value);
+            Ok(())
+        } else {
+            Err(SendError::Disconnected(value))
         }
-
-        while let Some(v) = self.buffer.push(value) {
-            self.buffer.pop();
-            value = v;
-        }
-
-        Ok(())
     }
 
     pub fn recv(&self) -> Result<T, RecvError> {
