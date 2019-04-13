@@ -13,6 +13,7 @@ stages:
 - check
 - test
 - sanitize
+- benchmark
 
 addons:
   apt:
@@ -70,3 +71,10 @@ jobs:
     os: linux
     script:
     - RUSTFLAGS="-Z sanitizer=leak" cargo test -v --all-features --target x86_64-unknown-linux-gnu
+
+  - stage: benchmark
+    if: type = pull_request
+    rust: nightly
+    os: linux
+    script:
+    - cargo bench --all-features
