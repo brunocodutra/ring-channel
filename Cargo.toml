@@ -23,3 +23,6 @@ rayon = "1.0.3"
 name = "concurrency"
 harness = false
 
+[[bench]]
+name = "throughput"
+harness = false
