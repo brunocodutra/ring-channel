@@ -8,7 +8,7 @@ repository = "https://github.com/brunocodutra/ring-channel.git"
 license = "MIT"
 readme = "README.md"
 keywords = ["mpmc", "channel", "asynchronous", "ring"]
-categories = ["asynchronous"]
+categories = ["concurrency", "asynchronous"]
 
 [dependencies]
 crossbeam-queue = "0.1.2"
