@@ -4,12 +4,6 @@ use derivative::Derivative;
 /// The receiving end of a [`ring_channel`].
 ///
 /// [`ring_channel`]: fn.ring_channel.html
-///
-/// # Examples
-///
-/// ```rust
-/// // TODO
-/// ```
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""), Clone(bound = ""))]
 pub struct RingReceiver<T>(#[derivative(Debug = "ignore")] pub Endpoint<T>);

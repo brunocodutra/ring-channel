@@ -22,8 +22,50 @@ pub use sender::*;
 ///
 /// # Examples
 ///
-/// ```rust
-/// // TODO
+/// ```rust,no_run
+/// use ring_channel::*;
+/// use std::thread;
+/// use std::time::{Duration, Instant};
+///
+/// fn main() {
+///     // Open a channel to transmit the time elapsed since the beginning of the countdown.
+///     // We only need a buffer of size 1, since we're only interested in the current value.
+///     let (tx, rx) = ring_channel(1);
+///
+///     thread::spawn(move || {
+///         let countdown = Instant::now() + Duration::from_secs(10);
+///
+///         // Update the channel with the time elapsed so far.
+///         while let Ok(_) = tx.send(countdown - Instant::now()) {
+///
+///             // We only need millisecond precision.
+///             thread::sleep(Duration::from_millis(1));
+///
+///             if Instant::now() > countdown {
+///                 break;
+///             }
+///         }
+///     });
+///
+///     loop {
+///         match rx.recv() {
+///             // Print the current time elapsed.
+///             Ok(timer) => {
+///                 print!("\r{:02}.{:03}", timer.as_secs(), timer.as_millis() % 1000);
+///
+///                 if timer <= Duration::from_millis(6600) {
+///                     print!(" - Main engine start                           ");
+///                 } else {
+///                     print!(" - Activate main engine hydrogen burnoff system");
+///                 }
+///             }
+///             Err(RecvError::Empty) => thread::yield_now(),
+///             Err(RecvError::Disconnected) => break,
+///         }
+///     }
+///
+///     println!("\r00.0000 - Solid rocket booster ignition and liftoff!")
+/// }
 /// ```
 pub fn ring_channel<T>(capacity: usize) -> (RingSender<T>, RingReceiver<T>) {
     assert!(capacity > 0, "capacity must be greater than zero");
