@@ -2,9 +2,9 @@
 
 Never blocking, bounded MPMC channel abstraction on top of a ring buffer.
 
-## Using Reducer
+## Using RingChannel
 
-Reducer is available on [crates.io][crate.home], simply add it as a dependency in your `Cargo.toml`:
+RingChannel is available on [crates.io][crate.home], simply add it as a dependency in your `Cargo.toml`:
 
 ```
 [dependencies]
