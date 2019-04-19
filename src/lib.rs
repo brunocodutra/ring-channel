@@ -9,6 +9,8 @@ pub use error::*;
 pub use receiver::*;
 pub use sender::*;
 
+use std::num::NonZeroUsize;
+
 /// Opens a multi-producer multi-consumer channel backed by a ring buffer.
 ///
 /// The associated ring buffer can contain up to `capacity` pending messages.
@@ -24,13 +26,14 @@ pub use sender::*;
 ///
 /// ```rust,no_run
 /// use ring_channel::*;
+/// use std::num::NonZeroUsize;
 /// use std::thread;
 /// use std::time::{Duration, Instant};
 ///
 /// fn main() {
 ///     // Open a channel to transmit the time elapsed since the beginning of the countdown.
 ///     // We only need a buffer of size 1, since we're only interested in the current value.
-///     let (tx, rx) = ring_channel(1);
+///     let (tx, rx) = ring_channel(NonZeroUsize::new(1).unwrap());
 ///
 ///     thread::spawn(move || {
 ///         let countdown = Instant::now() + Duration::from_secs(10);
@@ -67,19 +70,7 @@ pub use sender::*;
 ///     println!("\r00.0000 - Solid rocket booster ignition and liftoff!")
 /// }
 /// ```
-pub fn ring_channel<T>(capacity: usize) -> (RingSender<T>, RingReceiver<T>) {
-    assert!(capacity > 0, "capacity must be greater than zero");
-    let channel::RingChannel(left, right) = channel::RingChannel::new(capacity);
+pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T>) {
+    let channel::RingChannel(left, right) = channel::RingChannel::new(capacity.get());
     (RingSender(left), RingReceiver(right))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[should_panic]
-    fn ring_channel_panics_on_zero_capacity() {
-        ring_channel::<()>(0);
-    }
 }

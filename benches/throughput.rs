@@ -1,6 +1,7 @@
 use criterion::*;
 use rayon::{current_num_threads, scope};
 use ring_channel::*;
+use std::num::NonZeroUsize;
 use std::thread;
 
 fn throughput(m: usize, n: usize, messages: usize) -> ParameterizedBenchmark<usize> {
@@ -9,7 +10,7 @@ fn throughput(m: usize, n: usize, messages: usize) -> ParameterizedBenchmark<usi
         move |b, &capacity| {
             b.iter_batched(
                 || {
-                    let (tx, rx) = ring_channel(capacity);
+                    let (tx, rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
                     (vec![tx; m], vec![rx; n])
                 },
                 |(txs, rxs)| {
