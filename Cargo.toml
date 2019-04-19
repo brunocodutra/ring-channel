@@ -1,6 +1,6 @@
 [package]
 name = "ring-channel"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2018"
 authors = ["Bruno Dutra <brunocodutra@gmail.com>"]
 description = "Never blocking, bounded MPMC channel abstraction on top of a ring buffer"
