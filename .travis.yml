@@ -63,14 +63,14 @@ jobs:
     rust: nightly
     os: linux
     script:
-    - RUSTFLAGS="-Z sanitizer=address" cargo test -v --all-features --target x86_64-unknown-linux-gnu
+    - RUSTFLAGS="-Z sanitizer=address" cargo test --tests --lib -v --all-features --target x86_64-unknown-linux-gnu
 
   - name: leak
     stage: sanitize
     rust: nightly
     os: linux
     script:
-    - RUSTFLAGS="-Z sanitizer=leak" cargo test -v --all-features --target x86_64-unknown-linux-gnu
+    - RUSTFLAGS="-Z sanitizer=leak" cargo test --tests --lib -v --all-features --target x86_64-unknown-linux-gnu
 
   - stage: benchmark
     if: type = pull_request
