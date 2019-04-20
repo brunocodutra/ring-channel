@@ -10,6 +10,10 @@ readme = "README.md"
 keywords = ["mpmc", "channel", "asynchronous", "ring"]
 categories = ["concurrency", "asynchronous"]
 
+[badges]
+travis-ci = { repository = "brunocodutra/ring-channel" }
+codecov = { repository = "brunocodutra/ring-channel" }
+
 [dependencies]
 crossbeam-queue = "0.1.2"
 derivative = "1.0.2"
