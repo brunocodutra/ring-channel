@@ -10,6 +10,12 @@ readme = "README.md"
 keywords = ["mpmc", "channel", "asynchronous", "ring"]
 categories = ["concurrency", "asynchronous"]
 
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+futures_api = ["futures-preview"]
+
 [badges]
 travis-ci = { repository = "brunocodutra/ring-channel" }
 codecov = { repository = "brunocodutra/ring-channel" }
@@ -17,6 +23,7 @@ codecov = { repository = "brunocodutra/ring-channel" }
 [dependencies]
 crossbeam-queue = "0.1.2"
 derivative = "1.0.2"
+futures-preview = { version = "0.3.0-alpha.14", optional = true }
 
 [dev-dependencies]
 criterion = "0.2.10"
