@@ -107,9 +107,14 @@
 //! assert_eq!(rx.recv(), Err(RecvError::Disconnected));
 //! ```
 
+#![cfg_attr(feature = "futures_api", feature(futures_api))]
+
 mod buffer;
 mod channel;
 mod error;
+
+#[cfg(feature = "futures_api")]
+mod futures;
 
 pub use channel::*;
 pub use error::*;
