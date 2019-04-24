@@ -6,7 +6,7 @@ use derivative::Derivative;
 /// [`ring_channel`]: fn.ring_channel.html
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""), Clone(bound = ""))]
-pub struct RingSender<T>(#[derivative(Debug = "ignore")] pub Endpoint<T>);
+pub struct RingSender<T>(#[derivative(Debug = "ignore")] pub(super) Endpoint<T>);
 
 impl<T> RingSender<T> {
     /// Sends a message through the channel without blocking.

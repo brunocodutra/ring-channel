@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""))]
-pub struct ControlBlock<T> {
+pub(super) struct ControlBlock<T> {
     left: AtomicUsize,
     right: AtomicUsize,
     connected: AtomicBool,
@@ -39,7 +39,7 @@ impl<T> ControlBlock<T> {
         Box::from_raw(self as *const Self as *mut Self);
     }
 
-    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+    pub(super) fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.connected.load(Ordering::Relaxed) {
             self.buffer.push(value);
             Ok(())
@@ -48,7 +48,7 @@ impl<T> ControlBlock<T> {
         }
     }
 
-    pub fn recv(&self) -> Result<T, RecvError> {
+    pub(super) fn recv(&self) -> Result<T, RecvError> {
         self.buffer.pop().ok_or_else(|| {
             if !self.connected.load(Ordering::Relaxed) {
                 RecvError::Disconnected
@@ -69,7 +69,7 @@ impl<T> PartialEq for ControlBlock<T> {
 
 #[derive(Derivative, Eq, PartialEq)]
 #[derivative(Debug(bound = ""))]
-pub enum Endpoint<T> {
+pub(super) enum Endpoint<T> {
     Left(*const ControlBlock<T>),
     Right(*const ControlBlock<T>),
 }
@@ -136,10 +136,10 @@ impl<T> Drop for Endpoint<T> {
     }
 }
 
-pub struct RingChannel<T>(pub Endpoint<T>, pub Endpoint<T>);
+pub(super) struct RingChannel<T>(pub(super) Endpoint<T>, pub(super) Endpoint<T>);
 
 impl<T> RingChannel<T> {
-    pub fn new(capacity: usize) -> Self {
+    pub(super) fn new(capacity: usize) -> Self {
         let ctrl = Box::into_raw(Box::new(ControlBlock::new(capacity)));
         RingChannel(Endpoint::Left(ctrl), Endpoint::Right(ctrl))
     }
