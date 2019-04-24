@@ -3,26 +3,26 @@ use derivative::Derivative;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct RingBuffer<T>(#[derivative(Debug = "ignore")] ArrayQueue<T>);
+pub(super) struct RingBuffer<T>(#[derivative(Debug = "ignore")] ArrayQueue<T>);
 
 impl<T> RingBuffer<T> {
-    pub fn new(capacity: usize) -> Self {
+    pub(super) fn new(capacity: usize) -> Self {
         RingBuffer(ArrayQueue::new(capacity))
     }
 
     #[cfg(test)]
-    pub fn capacity(&self) -> usize {
+    pub(super) fn capacity(&self) -> usize {
         self.0.capacity()
     }
 
-    pub fn push(&self, mut value: T) {
+    pub(super) fn push(&self, mut value: T) {
         while let Err(PushError(v)) = self.0.push(value) {
             self.pop();
             value = v;
         }
     }
 
-    pub fn pop(&self) -> Option<T> {
+    pub(super) fn pop(&self) -> Option<T> {
         self.0.pop().ok()
     }
 }
