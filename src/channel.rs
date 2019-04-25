@@ -23,9 +23,9 @@ impl<T> ControlBlock<T> {
     }
 
     unsafe fn delete(&self) {
-        debug_assert!(self.left.load(Ordering::Relaxed) == 0);
-        debug_assert!(self.right.load(Ordering::Relaxed) == 0);
         debug_assert!(!self.connected.load(Ordering::Relaxed));
+        debug_assert_eq!(self.left.load(Ordering::Relaxed), 0);
+        debug_assert_eq!(self.right.load(Ordering::Relaxed), 0);
 
         Box::from_raw(self as *const Self as *mut Self);
     }
@@ -103,18 +103,16 @@ impl<T> Clone for Endpoint<T> {
 impl<T> Drop for Endpoint<T> {
     fn drop(&mut self) {
         use Endpoint::*;
-        let disconnect = match *self {
-            // synchronizes with other left endpoints
+        if match *self {
+            // Synchronizes with other left endpoints.
             Left(_) => self.left.fetch_sub(1, Ordering::AcqRel) == 1,
 
-            // synchronizes with other right endpoints
+            // Synchronizes with other right endpoints.
             Right(_) => self.right.fetch_sub(1, Ordering::AcqRel) == 1,
-        };
-
-        // synchronizes the last left and right endpoints with each other
-        if disconnect && !self.connected.swap(false, Ordering::AcqRel) {
-            unsafe {
-                self.delete();
+        } {
+            // Synchronizes the last left and right endpoints with each other.
+            if !self.connected.swap(false, Ordering::AcqRel) {
+                unsafe { self.delete() }
             }
         }
     }
