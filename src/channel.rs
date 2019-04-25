@@ -1,11 +1,11 @@
-use crate::{buffer::*, error::*, same};
+use crate::{buffer::*, error::*};
 use derivative::Derivative;
-use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::{num::NonZeroUsize, ops::Deref};
 
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""))]
-pub(super) struct ControlBlock<T> {
+struct ControlBlock<T> {
     left: AtomicUsize,
     right: AtomicUsize,
     connected: AtomicBool,
@@ -30,7 +30,7 @@ impl<T> ControlBlock<T> {
         Box::from_raw(self as *const Self as *mut Self);
     }
 
-    pub(super) fn send(&self, value: T) -> Result<(), SendError<T>> {
+    fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.connected.load(Ordering::Relaxed) {
             self.buffer.push(value);
             Ok(())
@@ -39,7 +39,7 @@ impl<T> ControlBlock<T> {
         }
     }
 
-    pub(super) fn recv(&self) -> Result<T, RecvError> {
+    fn recv(&self) -> Result<T, RecvError> {
         self.buffer.pop().ok_or_else(|| {
             if !self.connected.load(Ordering::Relaxed) {
                 RecvError::Disconnected
@@ -60,7 +60,7 @@ impl<T> PartialEq for ControlBlock<T> {
 
 #[derive(Derivative, Eq, PartialEq)]
 #[derivative(Debug(bound = ""))]
-pub(super) enum Endpoint<T> {
+enum Endpoint<T> {
     Left(*const ControlBlock<T>),
     Right(*const ControlBlock<T>),
 }
@@ -120,23 +120,114 @@ impl<T> Drop for Endpoint<T> {
     }
 }
 
-pub(super) struct RingChannel<T>(pub(super) Endpoint<T>, pub(super) Endpoint<T>);
+/// The sending end of a [`ring_channel`].
+///
+/// [`ring_channel`]: fn.ring_channel.html
+#[derive(Derivative)]
+#[derivative(Debug(bound = ""), Clone(bound = ""))]
+pub struct RingSender<T>(#[derivative(Debug = "ignore")] Endpoint<T>);
 
-impl<T> RingChannel<T> {
-    pub(super) fn new(capacity: usize) -> Self {
-        let ctrl = Box::into_raw(Box::new(ControlBlock::new(capacity)));
-        RingChannel(Endpoint::Left(ctrl), Endpoint::Right(ctrl))
+impl<T> RingSender<T> {
+    /// Sends a message through the channel without blocking.
+    ///
+    /// * If the channel is not disconnected, the message is pushed into the internal ring buffer.
+    ///     * If the internal ring buffer is full, the oldest pending message is overwritten.
+    /// * If the channel is disconnected, [`SendError::Disconnected`] is returned.
+    ///
+    /// [`SendError::Disconnected`]: enum.SendError.html#variant.Disconnected
+    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+        self.0.send(value)
     }
 }
 
-impl<T> Deref for RingChannel<T> {
-    type Target = ControlBlock<T>;
+/// The receiving end of a [`ring_channel`].
+///
+/// [`ring_channel`]: fn.ring_channel.html
+#[derive(Derivative)]
+#[derivative(Debug(bound = ""), Clone(bound = ""))]
+pub struct RingReceiver<T>(#[derivative(Debug = "ignore")] Endpoint<T>);
 
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        let RingChannel(l, r) = self;
-        same!(l as &Self::Target, r as &Self::Target)
+impl<T> RingReceiver<T> {
+    /// Receives a message through the channel without blocking.
+    ///
+    /// * If the internal ring buffer isn't empty, the oldest pending message is returned.
+    /// * If the internal ring buffer is empty, [`RecvError::Empty`] is returned.
+    /// * If the channel is disconnected and the internal ring buffer is empty,
+    /// [`RecvError::Disconnected`] is returned.
+    ///
+    /// [`RecvError::Empty`]: enum.RecvError.html#variant.Empty
+    /// [`RecvError::Disconnected`]: enum.RecvError.html#variant.Disconnected
+    pub fn recv(&self) -> Result<T, RecvError> {
+        self.0.recv()
     }
+}
+
+/// Opens a multi-producer multi-consumer channel backed by a ring buffer.
+///
+/// The associated ring buffer can contain up to `capacity` pending messages.
+///
+/// Sending and receiving messages through this channel _never blocks_, however
+/// pending messages may be overwritten if the internal ring buffer overflows.
+///
+/// # Panics
+///
+/// Panics if the `capacity` is `0`.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use ring_channel::*;
+/// use std::num::NonZeroUsize;
+/// use std::thread;
+/// use std::time::{Duration, Instant};
+///
+/// fn main() {
+///     // Open a channel to transmit the time elapsed since the beginning of the countdown.
+///     // We only need a buffer of size 1, since we're only interested in the current value.
+///     let (tx, rx) = ring_channel(NonZeroUsize::new(1).unwrap());
+///
+///     thread::spawn(move || {
+///         let countdown = Instant::now() + Duration::from_secs(10);
+///
+///         // Update the channel with the time elapsed so far.
+///         while let Ok(_) = tx.send(countdown - Instant::now()) {
+///
+///             // We only need millisecond precision.
+///             thread::sleep(Duration::from_millis(1));
+///
+///             if Instant::now() > countdown {
+///                 break;
+///             }
+///         }
+///     });
+///
+///     loop {
+///         match rx.recv() {
+///             // Print the current time elapsed.
+///             Ok(timer) => {
+///                 print!("\r{:02}.{:03}", timer.as_secs(), timer.as_millis() % 1000);
+///
+///                 if timer <= Duration::from_millis(6600) {
+///                     print!(" - Main engine start                           ");
+///                 } else {
+///                     print!(" - Activate main engine hydrogen burnoff system");
+///                 }
+///             }
+///             Err(RecvError::Empty) => thread::yield_now(),
+///             Err(RecvError::Disconnected) => break,
+///         }
+///     }
+///
+///     println!("\r00.0000 - Solid rocket booster ignition and liftoff!")
+/// }
+/// ```
+pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T>) {
+    let ctrl = Box::into_raw(Box::new(ControlBlock::new(capacity.get())));
+
+    (
+        RingSender(Endpoint::Left(ctrl)),
+        RingReceiver(Endpoint::Right(ctrl)),
+    )
 }
 
 #[cfg(test)]
@@ -176,69 +267,69 @@ mod tests {
 
     #[test]
     fn ring_channel_holds_endpoints_of_the_same_control_block() {
-        let RingChannel::<()>(l, r) = RingChannel::new(1);
-        assert_eq!(&l as &ControlBlock<_>, &r as &ControlBlock<_>);
-        assert_ne!(l, r);
+        let (l, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(&l.0 as &ControlBlock<_>, &r.0 as &ControlBlock<_>);
+        assert_ne!(l.0, r.0);
     }
 
     #[test]
     fn cloning_left_endpoint_increments_left_counter() {
-        let RingChannel::<()>(l, _r) = RingChannel::new(1);
+        let (l, _r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         let x = l.clone();
-        assert_eq!(x.left.load(Ordering::Relaxed), 2);
-        assert_eq!(x.right.load(Ordering::Relaxed), 1);
+        assert_eq!(x.0.left.load(Ordering::Relaxed), 2);
+        assert_eq!(x.0.right.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn cloning_right_endpoint_increments_right_counter() {
-        let RingChannel::<()>(_l, r) = RingChannel::new(1);
+        let (_l, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         let x = r.clone();
-        assert_eq!(x.left.load(Ordering::Relaxed), 1);
-        assert_eq!(x.right.load(Ordering::Relaxed), 2);
+        assert_eq!(x.0.left.load(Ordering::Relaxed), 1);
+        assert_eq!(x.0.right.load(Ordering::Relaxed), 2);
     }
 
     #[test]
     fn dropping_left_endpoint_decrements_left_counter() {
-        let RingChannel::<()>(_, r) = RingChannel::new(1);
-        assert_eq!(r.left.load(Ordering::Relaxed), 0);
-        assert_eq!(r.right.load(Ordering::Relaxed), 1);
+        let (_, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(r.0.left.load(Ordering::Relaxed), 0);
+        assert_eq!(r.0.right.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn dropping_right_endpoint_decrements_right_counter() {
-        let RingChannel::<()>(l, _) = RingChannel::new(1);
-        assert_eq!(l.left.load(Ordering::Relaxed), 1);
-        assert_eq!(l.right.load(Ordering::Relaxed), 0);
+        let (l, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(l.0.left.load(Ordering::Relaxed), 1);
+        assert_eq!(l.0.right.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn channel_is_disconnected_if_there_are_no_left_endpoints() {
-        let RingChannel::<()>(_, r) = RingChannel::new(1);
-        assert_eq!(r.left.load(Ordering::Relaxed), 0);
-        assert_eq!(r.connected.load(Ordering::Relaxed), false);
+        let (_, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(r.0.left.load(Ordering::Relaxed), 0);
+        assert_eq!(r.0.connected.load(Ordering::Relaxed), false);
     }
 
     #[test]
     fn channel_is_disconnected_if_there_are_no_right_endpoints() {
-        let RingChannel::<()>(l, _) = RingChannel::new(1);
-        assert_eq!(l.right.load(Ordering::Relaxed), 0);
-        assert_eq!(l.connected.load(Ordering::Relaxed), false);
+        let (l, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(l.0.right.load(Ordering::Relaxed), 0);
+        assert_eq!(l.0.connected.load(Ordering::Relaxed), false);
     }
 
     proptest! {
         #[test]
         fn endpoints_are_safe_to_send_across_threads(m in 1..=100usize, n in 1..=100usize) {
-            let RingChannel::<()>(l, r) = RingChannel::new(1);
-            let ls = repeatn(l, m);
-            let rs = repeatn(r, n);
+            let (l, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+            let ls = repeatn(l.0, m);
+            let rs = repeatn(r.0, n);
             ls.chain(rs).for_each(drop);
         }
 
         #[test]
         fn endpoints_are_safe_to_share_across_threads(m in 1..=100usize, n in 1..=100usize) {
-            let RingChannel::<()>(l, r) = RingChannel::new(1);
-            let ls = repeatn((), m).map(|_| l.clone());
-            let rs = repeatn((), n).map(|_| r.clone());
+            let (l, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+            let ls = repeatn((), m).map(|_| l.0.clone());
+            let rs = repeatn((), n).map(|_| r.0.clone());
             ls.chain(rs).for_each(drop);
         }
     }
@@ -246,7 +337,7 @@ mod tests {
     proptest! {
         #[test]
         fn send_succeeds_on_connected_channel(cap in 1..=100usize, msgs in vec("[a-z]", 1..=100)) {
-            let RingChannel(l, _r) = RingChannel::new(cap);
+            let (l, _r) = ring_channel(NonZeroUsize::new(cap).unwrap());
             repeatn(l, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(c, msg)| {
                 assert_eq!(c.send(msg), Ok(()));
             });
@@ -254,7 +345,7 @@ mod tests {
 
         #[test]
         fn send_fails_on_disconnected_channel(cap in 1..=100usize, msgs in vec("[a-z]", 1..=100)) {
-            let RingChannel(l, _) = RingChannel::new(cap);
+            let (l, _) = ring_channel(NonZeroUsize::new(cap).unwrap());
             repeatn(l, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(c, msg)| {
                 assert_eq!(c.send(msg.clone()), Err(SendError::Disconnected(msg)));
             });
@@ -262,7 +353,7 @@ mod tests {
 
         #[test]
         fn send_overwrites_old_messages(cap in 1..=100usize, mut msgs in vec("[a-z]", 1..=100)) {
-            let RingChannel(l, r) = RingChannel::new(cap);
+            let (l, r) = ring_channel(NonZeroUsize::new(cap).unwrap());
             let overwritten = msgs.len() - min(msgs.len(), cap);
 
             for msg in msgs.iter().cloned() {
@@ -270,7 +361,7 @@ mod tests {
             }
 
             assert_eq!(
-                iter::from_fn(move || r.buffer.pop()).collect::<Vec<_>>(),
+                iter::from_fn(move || r.0.buffer.pop()).collect::<Vec<_>>(),
                 msgs.drain(..).skip(overwritten).collect::<Vec<_>>()
             );
         }
@@ -279,9 +370,9 @@ mod tests {
     proptest! {
         #[test]
         fn recv_succeeds_on_non_empty_connected_channel(msgs in vec("[a-z]", 1..=100)) {
-            let RingChannel(l, r) = RingChannel::new(msgs.len());
+            let (l, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
             for msg in msgs.iter().cloned().enumerate() {
-                l.buffer.push(msg);
+                l.0.buffer.push(msg);
             }
 
             let mut received = vec![(0usize, Default::default()); msgs.len()];
@@ -299,15 +390,15 @@ mod tests {
 
         #[test]
         fn recv_succeeds_on_non_empty_disconnected_channel(msgs in vec("[a-z]", 1..=100)) {
-            let RingChannel(l, _) = RingChannel::new(msgs.len());
+            let (_, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
 
             for msg in msgs.iter().cloned().enumerate() {
-                l.buffer.push(msg);
+                r.0.buffer.push(msg);
             }
 
             let mut received = vec![(0usize, Default::default()); msgs.len()];
 
-            repeatn(l, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
+            repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
                 match c.recv() {
                     Ok(msg) => *slot = msg,
                     Err(e) => panic!(e),
@@ -320,17 +411,17 @@ mod tests {
 
         #[test]
         fn recv_fails_on_empty_connected_channel(cap in 1..=100usize, n in 1..=100usize) {
-            let channel = RingChannel::<()>::new(cap);
+            let (_l, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
             repeatn((), n).for_each(move |_| {
-                assert_eq!(channel.recv(), Err(RecvError::Empty));
+                assert_eq!(r.recv(), Err(RecvError::Empty));
             });
         }
 
         #[test]
         fn recv_fails_on_empty_disconnected_channel(cap in 1..=100usize, n in 1..=100usize) {
-            let RingChannel::<()>(l, _) = RingChannel::new(cap);
+            let (_, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
             repeatn((), n).for_each(move |_| {
-                assert_eq!(l.recv(), Err(RecvError::Disconnected));
+                assert_eq!(r.recv(), Err(RecvError::Disconnected));
             });
         }
     }
