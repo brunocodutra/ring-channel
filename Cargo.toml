@@ -37,3 +37,8 @@ harness = false
 [[bench]]
 name = "throughput"
 harness = false
+
+[[bench]]
+name = "futures"
+harness = false
+required-features = ["futures_api"]
