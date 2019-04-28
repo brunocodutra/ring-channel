@@ -4,10 +4,10 @@
 //!
 //! This crate provides a flavor of message passing that favors throughput over lossless
 //! communication. Under the hood, [`ring_channel`] is just a thin abstraction layer on top of a
-//! [MPMC lock-free ring-buffer][ring-buffer]. Neither sending nor receiving messages ever block,
-//! however messages can be lost if the internal buffer overflows, as incoming messages gradually
-//! overwrite older pending messages. This behavior is ideal for use-cases in which the consuming
-//! threads only care about the most up-to-date message.
+//! multi-producer multi-consumer lock-free ring-buffer. Neither sending nor receiving messages
+//! ever block, however messages can be lost if the internal buffer overflows, as incoming messages
+//! gradually overwrite older pending messages. This behavior is ideal for use-cases in which the
+//! consuming threads only care about the most up-to-date message.
 //!
 //! * One example is a rendering GUI thread that runs at a fixed rate of frames per second and
 //! which recives the current state of the application through the channel for display.
@@ -18,7 +18,6 @@
 //! noticeable impact to the user experience.
 //!
 //! [`ring_channel`]: fn.ring_channel.html
-//! [ring-buffer]: https://github.com/brunocodutra/ring-channel/blob/master/src/buffer.rs
 //!
 //! # Hello, world!
 //!
@@ -106,6 +105,41 @@
 //! // Finally, the channel reports itself as disconnectd.
 //! assert_eq!(rx.recv(), Err(RecvError::Disconnected));
 //! ```
+//!
+//! # Experimental Features
+//!
+//! The following cargo feature flags are available:
+//! * `futures_api` (depends on nightly Rust)
+//!
+//!     Provides experimental implementations of Sink for [`RingSender`] and
+//!     Stream for [`RingReceiver`] based on [futures-rs].
+//!
+//!     ```rust
+//!     # {
+//!     #![cfg(feature = "futures_api")]
+//!
+//!     use ring_channel::*;
+//!     use futures::{executor::*, prelude::*, stream};
+//!     use std::{num::NonZeroUsize, thread};
+//!
+//!     // Open the channel.
+//!     let (mut tx, rx) = ring_channel(NonZeroUsize::new(13).unwrap());
+//!
+//!     let message = &['H', 'e', 'l', 'l', 'o', ',', ' ', 'w', 'o', 'r', 'l', 'd', '!'];
+//!
+//!     thread::spawn(move || {
+//!         // Send the stream of characters through the Sink.
+//!         block_on(tx.send_all(&mut stream::iter(message))).unwrap();
+//!     });
+//!
+//!     // Receive the stream of characters through the outbound endpoint.
+//!     assert_eq!(&block_on_stream(rx).collect::<String>(), "Hello, world!");
+//!     # }
+//!     ```
+//!
+//! [`RingSender`]: struct.RingSender.html
+//! [`RingReceiver`]: struct.RingReceiver.html
+//! [futures-rs]: https://crates.io/crates/futures-preview
 
 #![cfg_attr(feature = "futures_api", feature(futures_api))]
 
