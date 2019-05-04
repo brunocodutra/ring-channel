@@ -26,8 +26,8 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
 
                         for tx in txs {
                             s.spawn(move |_| {
-                                for msg in 0..msgs / m {
-                                    tx.send(msg).unwrap();
+                                for msg in 1..=msgs / m {
+                                    tx.send(NonZeroUsize::new(msg).unwrap()).unwrap();
                                 }
                             });
                         }

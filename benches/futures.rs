@@ -21,7 +21,11 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
 
                         for mut tx in txs {
                             s.spawn(move |_| {
-                                block_on(tx.send_all(&mut iter(0..msgs / m))).unwrap();
+                                let mut data = iter(1..=msgs / m)
+                                    .map(NonZeroUsize::new)
+                                    .map(Option::unwrap);
+
+                                block_on(tx.send_all(&mut data)).unwrap();
                             });
                         }
                     })

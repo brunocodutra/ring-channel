@@ -1,29 +1,55 @@
 use crossbeam_queue::{ArrayQueue, PushError};
 use derivative::Derivative;
 
+type AtomicOption<T> = crossbeam_utils::atomic::AtomicCell<Option<T>>;
+
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub(super) struct RingBuffer<T>(#[derivative(Debug = "ignore")] ArrayQueue<T>);
+pub(super) enum RingBuffer<T> {
+    Queue(#[derivative(Debug = "ignore")] ArrayQueue<T>),
+    Cell(#[derivative(Debug = "ignore")] AtomicOption<T>),
+}
 
 impl<T> RingBuffer<T> {
     pub(super) fn new(capacity: usize) -> Self {
-        RingBuffer(ArrayQueue::new(capacity))
+        if capacity > 1 || !AtomicOption::<T>::is_lock_free() {
+            RingBuffer::Queue(ArrayQueue::new(capacity))
+        } else {
+            RingBuffer::Cell(AtomicOption::new(None))
+        }
     }
 
     #[cfg(test)]
     pub(super) fn capacity(&self) -> usize {
-        self.0.capacity()
+        use RingBuffer::*;
+        match self {
+            Queue(q) => q.capacity(),
+            Cell(_) => 1,
+        }
     }
 
     pub(super) fn push(&self, mut value: T) {
-        while let Err(PushError(v)) = self.0.push(value) {
-            self.pop();
-            value = v;
+        use RingBuffer::*;
+        match self {
+            Queue(q) => {
+                while let Err(PushError(v)) = q.push(value) {
+                    self.pop();
+                    value = v;
+                }
+            }
+
+            Cell(c) => {
+                c.swap(Some(value));
+            }
         }
     }
 
     pub(super) fn pop(&self) -> Option<T> {
-        self.0.pop().ok()
+        use RingBuffer::*;
+        match self {
+            Queue(q) => q.pop().ok(),
+            Cell(c) => c.swap(None),
+        }
     }
 }
 
@@ -31,7 +57,58 @@ impl<T> RingBuffer<T> {
 mod tests {
     use super::*;
     use proptest::{collection::vec, prelude::*};
-    use std::cmp::max;
+    use std::{cmp::max, mem::discriminant};
+
+    #[test]
+    fn queue() {
+        assert_eq!(
+            discriminant(&RingBuffer::<String>::new(1)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(1)))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<std::num::NonZeroUsize>::new(2)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<std::ptr::NonNull<String>>::new(2)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<std::rc::Rc<String>>::new(2)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<std::sync::Arc<String>>::new(2)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
+        );
+    }
+
+    #[test]
+    fn cell() {
+        assert_eq!(
+            discriminant(&RingBuffer::<std::num::NonZeroUsize>::new(1)),
+            discriminant(&RingBuffer::Cell(Default::default()))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<std::ptr::NonNull<String>>::new(1)),
+            discriminant(&RingBuffer::Cell(Default::default()))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<std::rc::Rc<String>>::new(1)),
+            discriminant(&RingBuffer::Cell(Default::default()))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<std::sync::Arc<String>>::new(1)),
+            discriminant(&RingBuffer::Cell(Default::default()))
+        );
+    }
 
     proptest! {
         #[test]
@@ -41,7 +118,7 @@ mod tests {
         }
 
         #[test]
-        fn push_pop(entries in vec(any::<u32>(), 1..=100), capacity in 1..=100usize) {
+        fn overflow(entries in vec(any::<u32>(), 1..=100), capacity in 1..=100usize) {
             let buffer = RingBuffer::new(capacity);
 
             for &entry in &entries {
