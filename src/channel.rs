@@ -1,4 +1,5 @@
 use crate::{buffer::*, error::*};
+use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{num::NonZeroUsize, ops::Deref};
@@ -6,19 +7,19 @@ use std::{num::NonZeroUsize, ops::Deref};
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""))]
 struct ControlBlock<T> {
-    left: AtomicUsize,
-    right: AtomicUsize,
-    connected: AtomicBool,
+    left: CachePadded<AtomicUsize>,
+    right: CachePadded<AtomicUsize>,
     buffer: RingBuffer<T>,
+    connected: AtomicBool,
 }
 
 impl<T> ControlBlock<T> {
     fn new(capacity: usize) -> Self {
         Self {
-            left: AtomicUsize::new(1),
-            right: AtomicUsize::new(1),
-            connected: AtomicBool::new(true),
+            left: CachePadded::new(AtomicUsize::new(1)),
+            right: CachePadded::new(AtomicUsize::new(1)),
             buffer: RingBuffer::new(capacity),
+            connected: AtomicBool::new(true),
         }
     }
 
