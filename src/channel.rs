@@ -2,7 +2,7 @@ use crate::{buffer::*, error::*};
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::{num::NonZeroUsize, ops::Deref};
+use std::{num::NonZeroUsize, ops::Deref, ptr::NonNull};
 
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""))]
@@ -62,8 +62,8 @@ impl<T> PartialEq for ControlBlock<T> {
 #[derive(Derivative, Eq, PartialEq)]
 #[derivative(Debug(bound = ""))]
 enum Endpoint<T> {
-    Left(*const ControlBlock<T>),
-    Right(*const ControlBlock<T>),
+    Left(NonNull<ControlBlock<T>>),
+    Right(NonNull<ControlBlock<T>>),
 }
 
 unsafe impl<T: Send> Send for Endpoint<T> {}
@@ -80,7 +80,7 @@ impl<T> Deref for Endpoint<T> {
             Right(ptr) => ptr,
         };
 
-        unsafe { &*ptr }
+        unsafe { &*ptr.as_ptr() }
     }
 }
 
@@ -221,11 +221,12 @@ impl<T> RingReceiver<T> {
 /// }
 /// ```
 pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T>) {
-    let ctrl = Box::into_raw(Box::new(ControlBlock::new(capacity.get())));
+    let ctrl = ControlBlock::new(capacity.get());
+    let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(ctrl))) };
 
     (
-        RingSender(Endpoint::Left(ctrl)),
-        RingReceiver(Endpoint::Right(ctrl)),
+        RingSender(Endpoint::Left(ptr)),
+        RingReceiver(Endpoint::Right(ptr)),
     )
 }
 
