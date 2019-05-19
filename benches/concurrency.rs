@@ -1,7 +1,7 @@
 use criterion::*;
 use rayon::{current_num_threads, scope};
 use ring_channel::*;
-use std::num::NonZeroUsize;
+use std::{cmp::max, num::NonZeroUsize};
 
 fn concurrency(c: &mut Criterion) {
     let cardinality = 10000;
@@ -14,7 +14,7 @@ fn concurrency(c: &mut Criterion) {
                 || ring_channel::<usize>(NonZeroUsize::new(1).unwrap()),
                 |(tx, rx)| {
                     scope(|s| {
-                        for _ in 0..concurrency / 2 {
+                        for _ in 0..max(concurrency / 2, 1) {
                             s.spawn(|_| {
                                 for _ in 0..cardinality / concurrency {
                                     drop(tx.clone());

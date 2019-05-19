@@ -1,7 +1,7 @@
 use criterion::*;
 use rayon::{current_num_threads, scope};
 use ring_channel::*;
-use std::{num::NonZeroUsize, thread};
+use std::{cmp::max, num::NonZeroUsize, thread};
 
 fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
     ParameterizedBenchmark::new(
@@ -42,16 +42,18 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
 }
 
 fn mpmc(c: &mut Criterion) {
-    let cardinality = current_num_threads() / 2;
+    let cardinality = max(current_num_threads() / 2, 1);
     c.bench("mpmc", throughput(cardinality, cardinality, 1000));
 }
 
 fn mpsc(c: &mut Criterion) {
-    c.bench("mpsc", throughput(current_num_threads() - 1, 1, 1000));
+    let cardinality = max(current_num_threads() - 1, 1);
+    c.bench("mpsc", throughput(cardinality, 1, 1000));
 }
 
 fn spmc(c: &mut Criterion) {
-    c.bench("spmc", throughput(1, current_num_threads() - 1, 1000));
+    let cardinality = max(current_num_threads() - 1, 1);
+    c.bench("spmc", throughput(1, cardinality, 1000));
 }
 
 fn spsc(c: &mut Criterion) {
