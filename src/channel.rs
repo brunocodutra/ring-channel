@@ -51,18 +51,10 @@ impl<T> ControlBlock<T> {
     }
 }
 
-impl<T> Eq for ControlBlock<T> {}
-
-impl<T> PartialEq for ControlBlock<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self as *const _ == other as *const _
-    }
-}
-
 /// The sending end of a [`ring_channel`].
 ///
 /// [`ring_channel`]: fn.ring_channel.html
-#[derive(Derivative)]
+#[derive(Derivative, Eq, PartialEq)]
 #[derivative(Debug(bound = ""))]
 pub struct RingSender<T> {
     #[derivative(Debug = "ignore")]
@@ -111,7 +103,7 @@ impl<T> Drop for RingSender<T> {
 /// The receiving end of a [`ring_channel`].
 ///
 /// [`ring_channel`]: fn.ring_channel.html
-#[derive(Derivative)]
+#[derive(Derivative, Eq, PartialEq)]
 #[derivative(Debug(bound = ""))]
 pub struct RingReceiver<T> {
     #[derivative(Debug = "ignore")]
@@ -232,13 +224,6 @@ mod tests {
     use std::{cmp::min, iter};
 
     #[test]
-    fn control_block_has_object_identity() {
-        let ctrl = ControlBlock::<()>::new(1);
-        assert_eq!(ctrl, ctrl);
-        assert_ne!(ctrl, ControlBlock::<()>::new(1));
-    }
-
-    #[test]
     fn control_block_starts_connected() {
         let ctrl = ControlBlock::<()>::new(1);
         assert_eq!(ctrl.connected.load(Ordering::Relaxed), true);
@@ -263,6 +248,26 @@ mod tests {
     fn ring_channel_is_associated_with_a_single_control_block() {
         let (s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         assert_eq!(s.handle, r.handle);
+    }
+
+    #[test]
+    fn senders_are_equal_if_they_are_associated_with_the_same_ring_channel() {
+        let (s1, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (s2, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+
+        assert_eq!(s1, s1.clone());
+        assert_eq!(s2, s2.clone());
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn receivers_are_equal_if_they_are_associated_with_the_same_ring_channel() {
+        let (_, r1) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (_, r2) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+
+        assert_eq!(r1, r1.clone());
+        assert_eq!(r2, r2.clone());
+        assert_ne!(r1, r2);
     }
 
     #[test]
