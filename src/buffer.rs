@@ -56,6 +56,7 @@ impl<T> RingBuffer<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RingReceiver, RingSender};
     use proptest::{collection::vec, prelude::*};
     use std::{cmp::max, mem::discriminant};
 
@@ -85,6 +86,16 @@ mod tests {
             discriminant(&RingBuffer::<std::sync::Arc<String>>::new(2)),
             discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
         );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<RingReceiver<String>>::new(2)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<RingSender<String>>::new(2)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
+        );
     }
 
     #[test]
@@ -106,6 +117,16 @@ mod tests {
 
         assert_eq!(
             discriminant(&RingBuffer::<std::sync::Arc<String>>::new(1)),
+            discriminant(&RingBuffer::Cell(Default::default()))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<RingReceiver<String>>::new(1)),
+            discriminant(&RingBuffer::Cell(Default::default()))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<RingSender<String>>::new(1)),
             discriminant(&RingBuffer::Cell(Default::default()))
         );
     }
