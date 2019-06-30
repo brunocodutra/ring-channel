@@ -1,9 +1,7 @@
 use crate::{channel::*, error::*};
 use futures::task::{Context, Poll};
 use futures::{sink::Sink, stream::Stream};
-use std::{marker::Unpin, pin::Pin};
-
-impl<T> Unpin for RingSender<T> {}
+use std::pin::Pin;
 
 impl<T> Sink<T> for RingSender<T> {
     type SinkError = SendError<T>;
@@ -24,8 +22,6 @@ impl<T> Sink<T> for RingSender<T> {
         Poll::Ready(Ok(()))
     }
 }
-
-impl<T> Unpin for RingReceiver<T> {}
 
 impl<T> Stream for RingReceiver<T> {
     type Item = T;

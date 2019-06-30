@@ -141,8 +141,6 @@
 //! [`RingReceiver`]: struct.RingReceiver.html
 //! [futures-rs]: https://crates.io/crates/futures-preview
 
-#![cfg_attr(feature = "futures_api", feature(futures_api))]
-
 mod buffer;
 mod channel;
 mod error;
