@@ -14,6 +14,7 @@ categories = ["concurrency", "asynchronous"]
 all-features = true
 
 [features]
+default = ["futures_api"]
 futures_api = ["futures-preview"]
 
 [badges]
