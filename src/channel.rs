@@ -2,7 +2,7 @@ use crate::{buffer::*, error::*};
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::{num::NonZeroUsize, ptr::NonNull};
+use std::{mem::ManuallyDrop, num::NonZeroUsize, ops::Deref, ptr::NonNull};
 
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""))]
@@ -22,32 +22,38 @@ impl<T> ControlBlock<T> {
             buffer: RingBuffer::new(capacity),
         }
     }
+}
 
-    unsafe fn delete(&self) {
-        debug_assert!(!self.connected.load(Ordering::Relaxed));
-        debug_assert_eq!(self.senders.load(Ordering::Relaxed), 0);
-        debug_assert_eq!(self.receivers.load(Ordering::Relaxed), 0);
+#[derive(Derivative, Eq, PartialEq)]
+#[derivative(Debug(bound = ""), Clone(bound = ""))]
+struct ControlBlockRef<T>(NonNull<ControlBlock<T>>);
 
-        Box::from_raw(self as *const Self as *mut Self);
-    }
-
-    fn send(&self, value: T) -> Result<(), SendError<T>> {
-        if self.connected.load(Ordering::Relaxed) {
-            self.buffer.push(value);
-            Ok(())
-        } else {
-            Err(SendError::Disconnected(value))
-        }
-    }
-
-    fn recv(&self) -> Result<T, RecvError> {
-        self.buffer.pop().ok_or_else(|| {
-            if !self.connected.load(Ordering::Relaxed) {
-                RecvError::Disconnected
-            } else {
-                RecvError::Empty
-            }
+impl<T> ControlBlockRef<T> {
+    fn new(capacity: usize) -> Self {
+        ControlBlockRef(unsafe {
+            NonNull::new_unchecked(Box::into_raw(Box::new(ControlBlock::new(capacity))))
         })
+    }
+}
+
+impl<T> Deref for ControlBlockRef<T> {
+    type Target = ControlBlock<T>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> Drop for ControlBlockRef<T> {
+    fn drop(&mut self) {
+        unsafe {
+            debug_assert!(!self.connected.load(Ordering::Relaxed));
+            debug_assert_eq!(self.senders.load(Ordering::Relaxed), 0);
+            debug_assert_eq!(self.receivers.load(Ordering::Relaxed), 0);
+
+            Box::from_raw(&**self as *const ControlBlock<T> as *mut ControlBlock<T>);
+        }
     }
 }
 
@@ -58,7 +64,7 @@ impl<T> ControlBlock<T> {
 #[derivative(Debug(bound = ""))]
 pub struct RingSender<T> {
     #[derivative(Debug = "ignore")]
-    handle: NonNull<ControlBlock<T>>,
+    handle: ManuallyDrop<ControlBlockRef<T>>,
 }
 
 unsafe impl<T: Send> Send for RingSender<T> {}
@@ -73,28 +79,30 @@ impl<T> RingSender<T> {
     ///
     /// [`SendError::Disconnected`]: enum.SendError.html#variant.Disconnected
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
-        unsafe { self.handle.as_ref() }.send(value)
+        if self.handle.connected.load(Ordering::Relaxed) {
+            self.handle.buffer.push(value);
+            Ok(())
+        } else {
+            Err(SendError::Disconnected(value))
+        }
     }
 }
 
 impl<T> Clone for RingSender<T> {
     fn clone(&self) -> Self {
-        let handle = self.handle;
-        let ctrl = unsafe { handle.as_ref() };
-        ctrl.senders.fetch_add(1, Ordering::Relaxed);
+        let handle = self.handle.clone();
+        handle.senders.fetch_add(1, Ordering::Relaxed);
         Self { handle }
     }
 }
 
 impl<T> Drop for RingSender<T> {
     fn drop(&mut self) {
-        let ctrl = unsafe { self.handle.as_ref() };
-
         // Synchronizes with other senders.
-        if ctrl.senders.fetch_sub(1, Ordering::AcqRel) == 1 {
+        if self.handle.senders.fetch_sub(1, Ordering::AcqRel) == 1 {
             // Synchronizes the last sender and receiver with each other.
-            if !ctrl.connected.swap(false, Ordering::AcqRel) {
-                unsafe { ctrl.delete() }
+            if !self.handle.connected.swap(false, Ordering::AcqRel) {
+                unsafe { ManuallyDrop::drop(&mut self.handle) }
             }
         }
     }
@@ -107,7 +115,7 @@ impl<T> Drop for RingSender<T> {
 #[derivative(Debug(bound = ""))]
 pub struct RingReceiver<T> {
     #[derivative(Debug = "ignore")]
-    handle: NonNull<ControlBlock<T>>,
+    handle: ManuallyDrop<ControlBlockRef<T>>,
 }
 
 unsafe impl<T: Send> Send for RingReceiver<T> {}
@@ -124,28 +132,31 @@ impl<T> RingReceiver<T> {
     /// [`RecvError::Empty`]: enum.RecvError.html#variant.Empty
     /// [`RecvError::Disconnected`]: enum.RecvError.html#variant.Disconnected
     pub fn recv(&self) -> Result<T, RecvError> {
-        unsafe { self.handle.as_ref() }.recv()
+        self.handle.buffer.pop().ok_or_else(|| {
+            if !self.handle.connected.load(Ordering::Relaxed) {
+                RecvError::Disconnected
+            } else {
+                RecvError::Empty
+            }
+        })
     }
 }
 
 impl<T> Clone for RingReceiver<T> {
     fn clone(&self) -> Self {
-        let handle = self.handle;
-        let ctrl = unsafe { handle.as_ref() };
-        ctrl.receivers.fetch_add(1, Ordering::Relaxed);
+        let handle = self.handle.clone();
+        handle.receivers.fetch_add(1, Ordering::Relaxed);
         Self { handle }
     }
 }
 
 impl<T> Drop for RingReceiver<T> {
     fn drop(&mut self) {
-        let ctrl = unsafe { self.handle.as_ref() };
-
         // Synchronizes with other receivers.
-        if ctrl.receivers.fetch_sub(1, Ordering::AcqRel) == 1 {
+        if self.handle.receivers.fetch_sub(1, Ordering::AcqRel) == 1 {
             // Synchronizes the last sender and receiver with each other.
-            if !ctrl.connected.swap(false, Ordering::AcqRel) {
-                unsafe { ctrl.delete() }
+            if !self.handle.connected.swap(false, Ordering::AcqRel) {
+                unsafe { ManuallyDrop::drop(&mut self.handle) }
             }
         }
     }
@@ -211,9 +222,9 @@ impl<T> Drop for RingReceiver<T> {
 /// }
 /// ```
 pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T>) {
-    let ctrl = ControlBlock::new(capacity.get());
-    let handle = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(ctrl))) };
-    (RingSender { handle }, RingReceiver { handle })
+    let l = ManuallyDrop::new(ControlBlockRef::new(capacity.get()));
+    let r = l.clone();
+    (RingSender { handle: l }, RingReceiver { handle: r })
 }
 
 #[cfg(test)]
@@ -274,50 +285,44 @@ mod tests {
     fn cloning_sender_increments_senders() {
         let (s, _r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         let x = s.clone();
-        let ctrl = unsafe { x.handle.as_ref() };
-        assert_eq!(ctrl.senders.load(Ordering::Relaxed), 2);
-        assert_eq!(ctrl.receivers.load(Ordering::Relaxed), 1);
+        assert_eq!(x.handle.senders.load(Ordering::Relaxed), 2);
+        assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn cloning_receiver_increments_receivers_counter() {
         let (_s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         let x = r.clone();
-        let ctrl = unsafe { x.handle.as_ref() };
-        assert_eq!(ctrl.senders.load(Ordering::Relaxed), 1);
-        assert_eq!(ctrl.receivers.load(Ordering::Relaxed), 2);
+        assert_eq!(x.handle.senders.load(Ordering::Relaxed), 1);
+        assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 2);
     }
 
     #[test]
     fn dropping_sender_decrements_senders_counter() {
         let (_, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let ctrl = unsafe { r.handle.as_ref() };
-        assert_eq!(ctrl.senders.load(Ordering::Relaxed), 0);
-        assert_eq!(ctrl.receivers.load(Ordering::Relaxed), 1);
+        assert_eq!(r.handle.senders.load(Ordering::Relaxed), 0);
+        assert_eq!(r.handle.receivers.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn dropping_receiver_decrements_receivers_counter() {
         let (s, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let ctrl = unsafe { s.handle.as_ref() };
-        assert_eq!(ctrl.senders.load(Ordering::Relaxed), 1);
-        assert_eq!(ctrl.receivers.load(Ordering::Relaxed), 0);
+        assert_eq!(s.handle.senders.load(Ordering::Relaxed), 1);
+        assert_eq!(s.handle.receivers.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn channel_is_disconnected_if_there_are_no_senders() {
         let (_, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let ctrl = unsafe { r.handle.as_ref() };
-        assert_eq!(ctrl.senders.load(Ordering::Relaxed), 0);
-        assert_eq!(ctrl.connected.load(Ordering::Relaxed), false);
+        assert_eq!(r.handle.senders.load(Ordering::Relaxed), 0);
+        assert_eq!(r.handle.connected.load(Ordering::Relaxed), false);
     }
 
     #[test]
     fn channel_is_disconnected_if_there_are_no_receivers() {
         let (s, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let ctrl = unsafe { s.handle.as_ref() };
-        assert_eq!(ctrl.receivers.load(Ordering::Relaxed), 0);
-        assert_eq!(ctrl.connected.load(Ordering::Relaxed), false);
+        assert_eq!(s.handle.receivers.load(Ordering::Relaxed), 0);
+        assert_eq!(s.handle.connected.load(Ordering::Relaxed), false);
     }
 
     #[derive(Clone)]
@@ -372,10 +377,8 @@ mod tests {
                 assert_eq!(s.send(msg), Ok(()));
             }
 
-            let ctrl = unsafe { r.handle.as_ref() };
-
             assert_eq!(
-                iter::from_fn(move || ctrl.buffer.pop()).collect::<Vec<_>>(),
+                iter::from_fn(move || r.handle.buffer.pop()).collect::<Vec<_>>(),
                 msgs.drain(..).skip(overwritten).collect::<Vec<_>>()
             );
         }
@@ -386,10 +389,8 @@ mod tests {
         fn recv_succeeds_on_non_empty_connected_channel(msgs in vec("[a-z]", 1..=100)) {
             let (s, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
 
-            let ctrl = unsafe { s.handle.as_ref() };
-
             for msg in msgs.iter().cloned().enumerate() {
-                ctrl.buffer.push(msg);
+                s.handle.buffer.push(msg);
             }
 
             let mut received = vec![(0usize, Default::default()); msgs.len()];
@@ -409,10 +410,8 @@ mod tests {
         fn recv_succeeds_on_non_empty_disconnected_channel(msgs in vec("[a-z]", 1..=100)) {
             let (_, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
 
-            let ctrl = unsafe { r.handle.as_ref() };
-
             for msg in msgs.iter().cloned().enumerate() {
-                ctrl.buffer.push(msg);
+                r.handle.buffer.push(msg);
             }
 
             let mut received = vec![(0usize, Default::default()); msgs.len()];
