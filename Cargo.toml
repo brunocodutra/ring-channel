@@ -44,3 +44,6 @@ harness = false
 name = "futures"
 harness = false
 required-features = ["futures_api"]
+
+[lib]
+bench = false
