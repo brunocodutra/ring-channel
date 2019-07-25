@@ -23,9 +23,9 @@ codecov = { repository = "brunocodutra/ring-channel" }
 
 [dependencies]
 crossbeam-queue = "0.1.2"
-crossbeam-utils = "0.6.5"
+crossbeam-utils = "0.6.6"
 derivative = "1.0.2"
-futures-preview = { version = "0.3.0-alpha.16", optional = true }
+futures-preview = { version = "0.3.0-alpha.17", optional = true }
 
 [dev-dependencies]
 criterion = "0.2.10"
