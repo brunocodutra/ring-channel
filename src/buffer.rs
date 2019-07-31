@@ -5,6 +5,7 @@ type AtomicOption<T> = crossbeam_utils::atomic::AtomicCell<Option<T>>;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(super) enum RingBuffer<T> {
     Queue(#[derivative(Debug = "ignore")] ArrayQueue<T>),
     Cell(#[derivative(Debug = "ignore")] AtomicOption<T>),
