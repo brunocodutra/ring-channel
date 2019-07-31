@@ -59,7 +59,7 @@ mod tests {
     use super::*;
     use crate::{RingReceiver, RingSender};
     use proptest::{collection::vec, prelude::*};
-    use std::{cmp::max, mem::discriminant};
+    use std::{cmp::max, mem::discriminant, num::NonZeroUsize, ptr::NonNull, rc::Rc, sync::Arc};
 
     #[test]
     fn queue() {
@@ -69,22 +69,22 @@ mod tests {
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<std::num::NonZeroUsize>::new(2)),
+            discriminant(&RingBuffer::<NonZeroUsize>::new(2)),
             discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<std::ptr::NonNull<String>>::new(2)),
+            discriminant(&RingBuffer::<NonNull<String>>::new(2)),
             discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<std::rc::Rc<String>>::new(2)),
+            discriminant(&RingBuffer::<Rc<String>>::new(2)),
             discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<std::sync::Arc<String>>::new(2)),
+            discriminant(&RingBuffer::<Arc<String>>::new(2)),
             discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
         );
 
@@ -102,22 +102,22 @@ mod tests {
     #[test]
     fn cell() {
         assert_eq!(
-            discriminant(&RingBuffer::<std::num::NonZeroUsize>::new(1)),
+            discriminant(&RingBuffer::<NonZeroUsize>::new(1)),
             discriminant(&RingBuffer::Cell(Default::default()))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<std::ptr::NonNull<String>>::new(1)),
+            discriminant(&RingBuffer::<NonNull<String>>::new(1)),
             discriminant(&RingBuffer::Cell(Default::default()))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<std::rc::Rc<String>>::new(1)),
+            discriminant(&RingBuffer::<Rc<String>>::new(1)),
             discriminant(&RingBuffer::Cell(Default::default()))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<std::sync::Arc<String>>::new(1)),
+            discriminant(&RingBuffer::<Arc<String>>::new(1)),
             discriminant(&RingBuffer::Cell(Default::default()))
         );
 
@@ -140,15 +140,15 @@ mod tests {
         }
 
         #[test]
-        fn overflow(entries in vec(any::<u32>(), 1..=100), capacity in 1..=100usize) {
+        fn overflow(entries in vec(any::<usize>(), 1..=100), capacity in 1..=100usize) {
             let buffer = RingBuffer::new(capacity);
 
             for &entry in &entries {
-                buffer.push(entry);
+                buffer.push(NonZeroUsize::new(entry).unwrap());
             }
 
             for &entry in entries.iter().skip(max(entries.len(), capacity) - capacity) {
-                assert_eq!(buffer.pop(), Some(entry));
+                assert_eq!(buffer.pop(), Some(NonZeroUsize::new(entry).unwrap()));
             }
 
             for _ in entries.len()..max(entries.len(), capacity) {
