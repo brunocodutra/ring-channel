@@ -18,7 +18,6 @@ default = ["futures_api"]
 futures_api = ["futures-preview"]
 
 [badges]
-travis-ci = { repository = "brunocodutra/ring-channel" }
 codecov = { repository = "brunocodutra/ring-channel" }
 
 [dependencies]

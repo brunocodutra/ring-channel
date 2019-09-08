@@ -1,4 +1,4 @@
-# RingChannel [![crate.badge]][crate.home] [![docs.badge]][docs.home] [![travis.badge]][travis.home] [![codecov.badge]][codecov.home]
+# RingChannel [![crate.badge]][crate.home] [![docs.badge]][docs.home] [![codecov.badge]][codecov.home]
 
 Never blocking, bounded MPMC channel abstraction on top of a ring buffer.
 
@@ -28,9 +28,6 @@ RingChannel is distributed under the terms of the MIT license, see [LICENSE] for
 
 [docs.home]:        https://docs.rs/ring-channel
 [docs.badge]:       https://docs.rs/ring-channel/badge.svg
-
-[travis.home]:      https://travis-ci.org/brunocodutra/ring-channel
-[travis.badge]:     https://travis-ci.org/brunocodutra/ring-channel.svg?branch=master
 
 [codecov.home]:     https://codecov.io/gh/brunocodutra/ring-channel
 [codecov.badge]:    https://codecov.io/gh/brunocodutra/ring-channel/branch/master/graph/badge.svg
