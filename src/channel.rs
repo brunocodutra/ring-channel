@@ -96,18 +96,18 @@ impl<T> RingReceiver<T> {
     /// Receives a message through the channel without blocking.
     ///
     /// * If the internal ring buffer isn't empty, the oldest pending message is returned.
-    /// * If the internal ring buffer is empty, [`RecvError::Empty`] is returned.
+    /// * If the internal ring buffer is empty, [`TryRecvError::Empty`] is returned.
     /// * If the channel is disconnected and the internal ring buffer is empty,
-    /// [`RecvError::Disconnected`] is returned.
+    /// [`TryRecvError::Disconnected`] is returned.
     ///
-    /// [`RecvError::Empty`]: enum.RecvError.html#variant.Empty
-    /// [`RecvError::Disconnected`]: enum.RecvError.html#variant.Disconnected
-    pub fn recv(&self) -> Result<T, RecvError> {
+    /// [`TryRecvError::Empty`]: enum.TryRecvError.html#variant.Empty
+    /// [`TryRecvError::Disconnected`]: enum.TryRecvError.html#variant.Disconnected
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
         self.handle.buffer.pop().ok_or_else(|| {
             if !self.handle.connected.load(Ordering::Relaxed) {
-                RecvError::Disconnected
+                TryRecvError::Disconnected
             } else {
-                RecvError::Empty
+                TryRecvError::Empty
             }
         })
     }
@@ -138,10 +138,10 @@ impl<T> Stream for RingReceiver<T> {
     type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.recv() {
+        match self.try_recv() {
             Ok(msg) => Poll::Ready(Some(msg)),
-            Err(RecvError::Disconnected) => Poll::Ready(None),
-            Err(RecvError::Empty) => {
+            Err(TryRecvError::Disconnected) => Poll::Ready(None),
+            Err(TryRecvError::Empty) => {
                 // Keep polling thread awake.
                 ctx.waker().wake_by_ref();
                 Poll::Pending
@@ -190,7 +190,7 @@ impl<T> Stream for RingReceiver<T> {
 ///     });
 ///
 ///     loop {
-///         match rx.recv() {
+///         match rx.try_recv() {
 ///             // Print the current time elapsed.
 ///             Ok(timer) => {
 ///                 print!("\r{:02}.{:03}", timer.as_secs(), timer.as_millis() % 1000);
@@ -201,8 +201,8 @@ impl<T> Stream for RingReceiver<T> {
 ///                     print!(" - Activate main engine hydrogen burnoff system");
 ///                 }
 ///             }
-///             Err(RecvError::Empty) => thread::yield_now(),
-///             Err(RecvError::Disconnected) => break,
+///             Err(TryRecvError::Empty) => thread::yield_now(),
+///             Err(TryRecvError::Disconnected) => break,
 ///         }
 ///     }
 ///
@@ -342,7 +342,7 @@ mod tests {
         }
 
         #[test]
-        fn recv_succeeds_on_non_empty_connected_channel(msgs in vec("[a-z]", 1..=100)) {
+        fn try_recv_succeeds_on_non_empty_connected_channel(msgs in vec("[a-z]", 1..=100)) {
             let (s, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
 
             for msg in msgs.iter().cloned().enumerate() {
@@ -352,7 +352,7 @@ mod tests {
             let mut received = vec![(0usize, Default::default()); msgs.len()];
 
             repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
-                match c.recv() {
+                match c.try_recv() {
                     Ok(msg) => *slot = msg,
                     Err(e) => panic!(e),
                 };
@@ -363,7 +363,7 @@ mod tests {
         }
 
         #[test]
-        fn recv_succeeds_on_non_empty_disconnected_channel(msgs in vec("[a-z]", 1..=100)) {
+        fn try_recv_succeeds_on_non_empty_disconnected_channel(msgs in vec("[a-z]", 1..=100)) {
             let (_, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
 
             for msg in msgs.iter().cloned().enumerate() {
@@ -373,7 +373,7 @@ mod tests {
             let mut received = vec![(0usize, Default::default()); msgs.len()];
 
             repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
-                match c.recv() {
+                match c.try_recv() {
                     Ok(msg) => *slot = msg,
                     Err(e) => panic!(e),
                 };
@@ -384,18 +384,18 @@ mod tests {
         }
 
         #[test]
-        fn recv_fails_on_empty_connected_channel(cap in 1..=100usize, n in 1..=100usize) {
+        fn try_recv_fails_on_empty_connected_channel(cap in 1..=100usize, n in 1..=100usize) {
             let (_s, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
             repeatn(r, n).for_each(|r| {
-                assert_eq!(r.recv(), Err(RecvError::Empty));
+                assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
             });
         }
 
         #[test]
-        fn recv_fails_on_empty_disconnected_channel(cap in 1..=100usize, n in 1..=100usize) {
+        fn try_recv_fails_on_empty_disconnected_channel(cap in 1..=100usize, n in 1..=100usize) {
             let (_, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
             repeatn(r, n).for_each(move |r| {
-                assert_eq!(r.recv(), Err(RecvError::Disconnected));
+                assert_eq!(r.try_recv(), Err(TryRecvError::Disconnected));
             });
         }
     }
@@ -412,7 +412,7 @@ mod tests {
             drop(tx); // hang-up
 
             assert_eq!(
-                iter::from_fn(move || rx.recv().ok()).collect::<Vec<_>>(),
+                iter::from_fn(move || rx.try_recv().ok()).collect::<Vec<_>>(),
                 msgs.drain(..).skip(overwritten).collect::<Vec<_>>()
             );
         }

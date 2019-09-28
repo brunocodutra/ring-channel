@@ -16,10 +16,10 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
                     scope(move |s| {
                         for rx in rxs {
                             s.spawn(move |_| loop {
-                                match rx.recv() {
+                                match rx.try_recv() {
                                     Ok(_) => continue,
-                                    Err(RecvError::Disconnected) => break,
-                                    Err(RecvError::Empty) => thread::yield_now(),
+                                    Err(TryRecvError::Disconnected) => break,
+                                    Err(TryRecvError::Empty) => thread::yield_now(),
                                 }
                             });
                         }
