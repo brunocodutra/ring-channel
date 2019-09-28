@@ -32,7 +32,7 @@ fn concurrency(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         })
-        .throughput(Throughput::Elements(cardinality as u32)),
+        .throughput(Throughput::Elements(cardinality as u64)),
     );
 }
 
