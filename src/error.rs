@@ -20,11 +20,11 @@ impl<T> fmt::Display for SendError<T> {
 
 impl<T: Send> error::Error for SendError<T> {}
 
-/// An error that may be returned from [`RingReceiver::recv`].
+/// An error that may be returned from [`RingReceiver::try_recv`].
 ///
-/// [`RingReceiver::recv`]: struct.RingReceiver.html#method.recv
+/// [`RingReceiver::try_recv`]: struct.RingReceiver.html#method.try_recv
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum RecvError {
+pub enum TryRecvError {
     /// No messages pending in the internal buffer.
     Empty,
 
@@ -32,9 +32,9 @@ pub enum RecvError {
     Disconnected,
 }
 
-impl fmt::Display for RecvError {
+impl fmt::Display for TryRecvError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use RecvError::*;
+        use TryRecvError::*;
         match self {
             Empty => "receiving on an empty channel".fmt(f),
             Disconnected => "receiving on an empty and disconnected channel".fmt(f),
@@ -42,7 +42,7 @@ impl fmt::Display for RecvError {
     }
 }
 
-impl error::Error for RecvError {}
+impl error::Error for TryRecvError {}
 
 #[cfg(test)]
 mod tests {
@@ -58,8 +58,11 @@ mod tests {
     }
 
     #[test]
-    fn recv_error_implements_error_trait() {
-        let err: Box<dyn error::Error> = RecvError::Disconnected.into();
-        assert_eq!(format!("{}", err), format!("{}", RecvError::Disconnected));
+    fn try_recv_error_implements_error_trait() {
+        let err: Box<dyn error::Error> = TryRecvError::Disconnected.into();
+        assert_eq!(
+            format!("{}", err),
+            format!("{}", TryRecvError::Disconnected)
+        );
     }
 }

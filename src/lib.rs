@@ -32,7 +32,7 @@
 //! tx.send("Hello, world!").unwrap();
 //!
 //! // Receive the message through the outbound endpoint.
-//! assert_eq!(rx.recv(), Ok("Hello, world!"));
+//! assert_eq!(rx.try_recv(), Ok("Hello, world!"));
 //! ```
 //!
 //! # Communicating across threads
@@ -58,7 +58,7 @@
 //!
 //! // Spawn a thread that echoes any message it receives.
 //! thread::spawn(move || loop {
-//!     if let Ok(msg) = rx2.recv() {
+//!     if let Ok(msg) = rx2.try_recv() {
 //!         tx2.send(msg).unwrap();
 //!     }
 //! });
@@ -66,7 +66,7 @@
 //! tx1.send("Hello, world!").unwrap();
 //!
 //! loop {
-//!     if let Ok(msg) = rx1.recv() {
+//!     if let Ok(msg) = rx1.try_recv() {
 //!         // Depending on which thread goes first,
 //!         // we might have received the direct message or the echo.
 //!         break assert_eq!(msg, "Hello, world!");
@@ -98,12 +98,12 @@
 //! drop((tx1, tx2, tx3));
 //!
 //! // Pending messages can still be received.
-//! assert_eq!(rx.recv(), Ok(1));
-//! assert_eq!(rx.recv(), Ok(2));
-//! assert_eq!(rx.recv(), Ok(3));
+//! assert_eq!(rx.try_recv(), Ok(1));
+//! assert_eq!(rx.try_recv(), Ok(2));
+//! assert_eq!(rx.try_recv(), Ok(3));
 //!
 //! // Finally, the channel reports itself as disconnectd.
-//! assert_eq!(rx.recv(), Err(RecvError::Disconnected));
+//! assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
 //! ```
 //!
 //! # Experimental Features
