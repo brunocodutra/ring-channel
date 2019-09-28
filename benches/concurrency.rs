@@ -13,15 +13,17 @@ fn concurrency(c: &mut Criterion) {
             b.iter_batched_ref(
                 || ring_channel::<usize>(NonZeroUsize::new(1).unwrap()),
                 |(tx, rx)| {
-                    scope(|s| {
+                    scope(move |s| {
                         for _ in 0..max(concurrency / 2, 1) {
-                            s.spawn(|_| {
+                            let tx = tx.clone();
+                            s.spawn(move |_| {
                                 for _ in 0..cardinality / concurrency {
                                     drop(tx.clone());
                                 }
                             });
 
-                            s.spawn(|_| {
+                            let rx = rx.clone();
+                            s.spawn(move |_| {
                                 for _ in 0..cardinality / concurrency {
                                     drop(rx.clone());
                                 }

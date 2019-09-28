@@ -20,7 +20,6 @@ pub struct RingSender<T> {
 }
 
 unsafe impl<T: Send> Send for RingSender<T> {}
-unsafe impl<T: Send> Sync for RingSender<T> {}
 
 impl<T> RingSender<T> {
     /// Sends a message through the channel without blocking.
@@ -92,7 +91,6 @@ pub struct RingReceiver<T> {
 }
 
 unsafe impl<T: Send> Send for RingReceiver<T> {}
-unsafe impl<T: Send> Sync for RingReceiver<T> {}
 
 impl<T> RingReceiver<T> {
     /// Receives a message through the channel without blocking.
@@ -297,28 +295,18 @@ mod tests {
         assert_eq!(s.handle.connected.load(Ordering::Relaxed), false);
     }
 
-    #[derive(Clone)]
-    enum Endpoint<T> {
-        Sender(RingSender<T>),
-        Receiver(RingReceiver<T>),
-    }
-
     proptest! {
         #[test]
         fn endpoints_are_safe_to_send_across_threads(m in 1..=100usize, n in 1..=100usize) {
+            #[derive(Clone)]
+            enum Endpoint<T> {
+                Sender(RingSender<T>),
+                Receiver(RingReceiver<T>),
+            }
+
             let (s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
             let ls = repeatn(Endpoint::Sender(s), m);
             let rs = repeatn(Endpoint::Receiver(r), n);
-            ls.chain(rs).for_each(drop);
-        }
-
-        #[test]
-        fn endpoints_are_safe_to_share_across_threads(m in 1..=100usize, n in 1..=100usize) {
-            let (s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-            let s = Endpoint::Sender(s);
-            let r = Endpoint::Receiver(r);
-            let ls = repeatn((), m).map(|_| s.clone());
-            let rs = repeatn((), n).map(|_| r.clone());
             ls.chain(rs).for_each(drop);
         }
 
@@ -398,7 +386,7 @@ mod tests {
         #[test]
         fn recv_fails_on_empty_connected_channel(cap in 1..=100usize, n in 1..=100usize) {
             let (_s, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
-            repeatn((), n).for_each(move |_| {
+            repeatn(r, n).for_each(|r| {
                 assert_eq!(r.recv(), Err(RecvError::Empty));
             });
         }
@@ -406,7 +394,7 @@ mod tests {
         #[test]
         fn recv_fails_on_empty_disconnected_channel(cap in 1..=100usize, n in 1..=100usize) {
             let (_, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
-            repeatn((), n).for_each(move |_| {
+            repeatn(r, n).for_each(move |r| {
                 assert_eq!(r.recv(), Err(RecvError::Disconnected));
             });
         }
