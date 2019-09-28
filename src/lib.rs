@@ -143,6 +143,7 @@
 
 mod buffer;
 mod channel;
+mod control;
 mod error;
 
 #[cfg(feature = "futures_api")]
