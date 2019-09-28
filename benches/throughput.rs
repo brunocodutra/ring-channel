@@ -38,7 +38,7 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
         },
         vec![1, m + n, msgs],
     )
-    .throughput(move |_| Throughput::Elements(msgs as u32))
+    .throughput(move |_| Throughput::Elements(msgs as u64))
 }
 
 fn mpmc(c: &mut Criterion) {

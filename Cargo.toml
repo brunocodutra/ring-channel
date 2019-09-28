@@ -23,13 +23,13 @@ codecov = { repository = "brunocodutra/ring-channel" }
 [dependencies]
 crossbeam-queue = "0.1.2"
 crossbeam-utils = "0.6.6"
-derivative = "1.0.2"
-futures-preview = { version = "0.3.0-alpha.17", optional = true }
+derivative = "1.0.3"
+futures-preview = { version = "0.3.0-alpha.19", optional = true }
 
 [dev-dependencies]
-criterion = "0.2.10"
+criterion = "0.3.0"
 proptest = "0.9.4"
-rayon = "1.1.0"
+rayon = "1.2.0"
 
 [[bench]]
 name = "concurrency"
