@@ -146,8 +146,5 @@ mod channel;
 mod control;
 mod error;
 
-#[cfg(feature = "futures_api")]
-mod futures;
-
 pub use channel::*;
 pub use error::*;

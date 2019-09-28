@@ -3,6 +3,12 @@ use derivative::Derivative;
 use std::sync::atomic::Ordering;
 use std::{mem::ManuallyDrop, num::NonZeroUsize};
 
+#[cfg(feature = "futures_api")]
+use futures::{sink::Sink, stream::Stream, task::*};
+
+#[cfg(feature = "futures_api")]
+use std::pin::Pin;
+
 /// The sending end of a [`ring_channel`].
 ///
 /// [`ring_channel`]: fn.ring_channel.html
@@ -51,6 +57,27 @@ impl<T> Drop for RingSender<T> {
                 unsafe { ManuallyDrop::drop(&mut self.handle) }
             }
         }
+    }
+}
+
+#[cfg(feature = "futures_api")]
+impl<T> Sink<T> for RingSender<T> {
+    type Error = SendError<T>;
+
+    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+        self.send(item)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -103,6 +130,23 @@ impl<T> Drop for RingReceiver<T> {
             // Synchronizes the last sender and receiver with each other.
             if !self.handle.connected.swap(false, Ordering::AcqRel) {
                 unsafe { ManuallyDrop::drop(&mut self.handle) }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "futures_api")]
+impl<T> Stream for RingReceiver<T> {
+    type Item = T;
+
+    fn poll_next(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.recv() {
+            Ok(msg) => Poll::Ready(Some(msg)),
+            Err(RecvError::Disconnected) => Poll::Ready(None),
+            Err(RecvError::Empty) => {
+                // Keep polling thread awake.
+                ctx.waker().wake_by_ref();
+                Poll::Pending
             }
         }
     }
@@ -176,9 +220,12 @@ pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::{collection::vec, prelude::*};
+    use proptest::{collection::*, prelude::*};
     use rayon::{iter::repeatn, prelude::*};
     use std::{cmp::min, iter};
+
+    #[cfg(feature = "futures_api")]
+    use futures::{executor::*, prelude::*, stream};
 
     #[test]
     fn ring_channel_is_associated_with_a_single_control_block() {
@@ -274,9 +321,7 @@ mod tests {
             let rs = repeatn((), n).map(|_| r.clone());
             ls.chain(rs).for_each(drop);
         }
-    }
 
-    proptest! {
         #[test]
         fn send_succeeds_on_connected_channel(cap in 1..=100usize, msgs in vec("[a-z]", 1..=100)) {
             let (s, _r) = ring_channel(NonZeroUsize::new(cap).unwrap());
@@ -307,9 +352,7 @@ mod tests {
                 msgs.drain(..).skip(overwritten).collect::<Vec<_>>()
             );
         }
-    }
 
-    proptest! {
         #[test]
         fn recv_succeeds_on_non_empty_connected_channel(msgs in vec("[a-z]", 1..=100)) {
             let (s, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
@@ -365,6 +408,95 @@ mod tests {
             let (_, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
             repeatn((), n).for_each(move |_| {
                 assert_eq!(r.recv(), Err(RecvError::Disconnected));
+            });
+        }
+    }
+
+    #[cfg(feature = "futures_api")]
+    proptest! {
+        #[test]
+        fn sink(cap in 1..=100usize, mut msgs in vec_deque("[a-z]", 1..=100)) {
+            let (mut tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
+            let overwritten = msgs.len() - min(msgs.len(), cap);
+
+            assert_eq!(block_on(tx.send_all(&mut msgs.clone())), Ok(()));
+
+            drop(tx); // hang-up
+
+            assert_eq!(
+                iter::from_fn(move || rx.recv().ok()).collect::<Vec<_>>(),
+                msgs.drain(..).skip(overwritten).collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn stream(cap in 1..=100usize, mut msgs in vec_deque("[a-z]", 1..=100)) {
+            let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
+            let overwritten = msgs.len() - min(msgs.len(), cap);
+
+            for msg in msgs.iter().cloned() {
+                assert_eq!(tx.send(msg), Ok(()));
+            }
+
+            drop(tx); // hang-up
+
+            assert_eq!(
+                block_on_stream(rx).collect::<Vec<_>>(),
+                msgs.drain(..).skip(overwritten).collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn stream_wakes_on_disconnect(n in 1..=100usize) {
+            let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+
+            rayon::scope(move |s| {
+                for _ in 0..n {
+                    let rx = rx.clone();
+                    s.spawn(move |_| assert_eq!(block_on_stream(rx).collect::<Vec<_>>(), vec![]));
+                }
+
+                s.spawn(move |_| drop(tx));
+            });
+        }
+
+        #[test]
+        fn stream_wakes_on_send(n in 1..=100usize) {
+            let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
+
+            rayon::scope(move |s| {
+                for _ in 0..n {
+                    let tx = tx.clone();
+                    let mut rx = rx.clone();
+                    s.spawn(move |_| {
+                        assert_eq!(block_on(rx.next()), Some(42));
+                        drop(tx); // Avoids waking on disconnect
+                    });
+                }
+
+                for _ in 0..n {
+                    let tx = tx.clone();
+                    s.spawn(move |_| assert_eq!(tx.send(42), Ok(())));
+                }
+            });
+        }
+
+        #[test]
+        fn stream_wakes_on_send_all(n in 1..=100usize) {
+            let (mut tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
+
+            rayon::scope(move |s| {
+                for _ in 0..n {
+                    let tx = tx.clone();
+                    let mut rx = rx.clone();
+                    s.spawn(move |_| {
+                        assert_eq!(block_on(rx.next()), Some(42));
+                        drop(tx); // Avoids waking on disconnect
+                    });
+                }
+
+                let mut msgs = stream::iter(vec![42; n]);
+                s.spawn(move |_| assert_eq!(block_on(tx.send_all(&mut msgs)), Ok(())));
             });
         }
     }
