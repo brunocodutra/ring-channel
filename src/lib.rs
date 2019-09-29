@@ -146,5 +146,8 @@ mod channel;
 mod control;
 mod error;
 
+#[cfg(feature = "futures_api")]
+mod waitlist;
+
 pub use channel::*;
 pub use error::*;
