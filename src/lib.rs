@@ -1,13 +1,14 @@
-//! Never blocking, bounded MPMC channel abstraction on top of a ring buffer.
+//! Bounded MPMC channel abstraction on top of a ring buffer.
 //!
 //! # Overview
 //!
 //! This crate provides a flavor of message passing that favors throughput over lossless
 //! communication. Under the hood, [`ring_channel`] is just a thin abstraction layer on top of a
-//! multi-producer multi-consumer lock-free ring-buffer. Neither sending nor receiving messages
-//! ever block, however messages can be lost if the internal buffer overflows, as incoming messages
+//! multi-producer multi-consumer lock-free ring-buffer. Sending nor receiving messages never
+//! blocks, however messages can be lost if the internal buffer overflows, as incoming messages
 //! gradually overwrite older pending messages. This behavior is ideal for use-cases in which the
-//! consuming threads only care about the most up-to-date message.
+//! consuming threads only care about the most up-to-date message and applying back pressure to
+//! producer threads is not desirable.
 //!
 //! * One example is a rendering GUI thread that runs at a fixed rate of frames per second and
 //! which recives the current state of the application through the channel for display.

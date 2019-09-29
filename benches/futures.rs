@@ -50,7 +50,7 @@ fn mpsc(c: &mut Criterion) {
 
 fn spmc(c: &mut Criterion) {
     let cardinality = max(current_num_threads() - 1, 1);
-    c.bench("futures/spmc", throughput(1, cardinality, 1000));
+    c.bench("futures/spmc", throughput(1, cardinality, 50));
 }
 
 fn spsc(c: &mut Criterion) {
