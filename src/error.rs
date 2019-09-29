@@ -1,12 +1,16 @@
 use derivative::Derivative;
 use std::{error, fmt};
 
+#[cfg(test)]
+use proptest_derive::Arbitrary;
+
 /// An error that may be returned from [`RingSender::send`].
 ///
 /// [`RingSender::send`]: struct.RingSender.html#method.send
 #[derive(Derivative)]
 #[derivative(Debug)]
 #[derive(Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(test, derive(Arbitrary))]
 pub enum SendError<T> {
     /// The channel is disconnected.
     Disconnected(#[derivative(Debug = "ignore")] T),
@@ -24,6 +28,7 @@ impl<T: Send> error::Error for SendError<T> {}
 ///
 /// [`RingReceiver::try_recv`]: struct.RingReceiver.html#method.try_recv
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(test, derive(Arbitrary))]
 pub enum TryRecvError {
     /// No messages pending in the internal buffer.
     Empty,
@@ -47,22 +52,23 @@ impl error::Error for TryRecvError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
-    #[test]
-    fn send_error_implements_error_trait() {
-        let err: Box<dyn error::Error> = SendError::Disconnected("").into();
-        assert_eq!(
-            format!("{}", err),
-            format!("{}", SendError::Disconnected(""))
-        );
-    }
+    proptest! {
+        #[test]
+        fn send_error_implements_error_trait(err: SendError<()>) {
+            assert_eq!(
+                format!("{}", err),
+                format!("{}", Box::<dyn error::Error>::from(err))
+            );
+        }
 
-    #[test]
-    fn try_recv_error_implements_error_trait() {
-        let err: Box<dyn error::Error> = TryRecvError::Disconnected.into();
-        assert_eq!(
-            format!("{}", err),
-            format!("{}", TryRecvError::Disconnected)
-        );
+        #[test]
+        fn try_recv_error_implements_error_trait(err: TryRecvError) {
+            assert_eq!(
+                format!("{}", err),
+                format!("{}", Box::<dyn error::Error>::from(err))
+            );
+        }
     }
 }
