@@ -40,6 +40,8 @@ impl<T> ControlBlock<T> {
 #[derivative(Debug(bound = ""), Clone(bound = ""))]
 pub(super) struct ControlBlockRef<T>(NonNull<ControlBlock<T>>);
 
+impl<T> Unpin for ControlBlockRef<T> {}
+
 impl<T> ControlBlockRef<T> {
     pub(super) fn new(capacity: usize) -> Self {
         ControlBlockRef(unsafe {
