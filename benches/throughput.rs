@@ -14,7 +14,7 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
                 },
                 |(txs, rxs)| {
                     scope(move |s| {
-                        for rx in rxs {
+                        for mut rx in rxs {
                             s.spawn(move |_| loop {
                                 match rx.try_recv() {
                                     Ok(_) => continue,
@@ -24,7 +24,7 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
                             });
                         }
 
-                        for tx in txs {
+                        for mut tx in txs {
                             s.spawn(move |_| {
                                 for msg in 1..=msgs / m {
                                     tx.send(NonZeroUsize::new(msg).unwrap()).unwrap();

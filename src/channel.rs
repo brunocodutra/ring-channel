@@ -29,7 +29,7 @@ impl<T> RingSender<T> {
     /// * If the channel is disconnected, [`SendError::Disconnected`] is returned.
     ///
     /// [`SendError::Disconnected`]: enum.SendError.html#variant.Disconnected
-    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+    pub fn send(&mut self, value: T) -> Result<(), SendError<T>> {
         if self.handle.receivers.load(Ordering::Relaxed) > 0 {
             self.handle.buffer.push(value);
 
@@ -84,7 +84,7 @@ impl<T> Sink<T> for RingSender<T> {
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
         self.send(item)
     }
 
@@ -119,7 +119,7 @@ impl<T> RingReceiver<T> {
     ///
     /// [`TryRecvError::Empty`]: enum.TryRecvError.html#variant.Empty
     /// [`TryRecvError::Disconnected`]: enum.TryRecvError.html#variant.Disconnected
-    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+    pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         self.handle.buffer.pop().ok_or_else(|| {
             if self.handle.senders.load(Ordering::Relaxed) > 0 {
                 TryRecvError::Empty
@@ -154,7 +154,7 @@ impl<T> Drop for RingReceiver<T> {
 impl<T> Stream for RingReceiver<T> {
     type Item = T;
 
-    fn poll_next(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.try_recv() {
             Ok(msg) => Poll::Ready(Some(msg)),
             Err(TryRecvError::Disconnected) => Poll::Ready(None),
@@ -198,7 +198,7 @@ impl<T> Stream for RingReceiver<T> {
 /// fn main() {
 ///     // Open a channel to transmit the time elapsed since the beginning of the countdown.
 ///     // We only need a buffer of size 1, since we're only interested in the current value.
-///     let (tx, rx) = ring_channel(NonZeroUsize::new(1).unwrap());
+///     let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(1).unwrap());
 ///
 ///     thread::spawn(move || {
 ///         let countdown = Instant::now() + Duration::from_secs(10);
@@ -339,7 +339,7 @@ mod tests {
         #[test]
         fn send_succeeds_on_connected_channel(cap in 1..=100usize, msgs in vec("[a-z]", 1..=100)) {
             let (s, _r) = ring_channel(NonZeroUsize::new(cap).unwrap());
-            repeatn(s, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(c, msg)| {
+            repeatn(s, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(mut c, msg)| {
                 assert_eq!(c.send(msg), Ok(()));
             });
         }
@@ -347,14 +347,14 @@ mod tests {
         #[test]
         fn send_fails_on_disconnected_channel(cap in 1..=100usize, msgs in vec("[a-z]", 1..=100)) {
             let (s, _) = ring_channel(NonZeroUsize::new(cap).unwrap());
-            repeatn(s, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(c, msg)| {
+            repeatn(s, msgs.len()).zip(msgs.par_iter().cloned()).for_each(|(mut c, msg)| {
                 assert_eq!(c.send(msg.clone()), Err(SendError::Disconnected(msg)));
             });
         }
 
         #[test]
         fn send_overwrites_old_messages(cap in 1..=100usize, mut msgs in vec("[a-z]", 1..=100)) {
-            let (s, r) = ring_channel(NonZeroUsize::new(cap).unwrap());
+            let (mut s, r) = ring_channel(NonZeroUsize::new(cap).unwrap());
             let overwritten = msgs.len() - min(msgs.len(), cap);
 
             for msg in msgs.iter().cloned() {
@@ -377,7 +377,7 @@ mod tests {
 
             let mut received = vec![(0usize, Default::default()); msgs.len()];
 
-            repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
+            repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(mut c, slot)| {
                 match c.try_recv() {
                     Ok(msg) => *slot = msg,
                     Err(e) => panic!(e),
@@ -398,7 +398,7 @@ mod tests {
 
             let mut received = vec![(0usize, Default::default()); msgs.len()];
 
-            repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(c, slot)| {
+            repeatn(r, msgs.len()).zip(received.par_iter_mut()).for_each(|(mut c, slot)| {
                 match c.try_recv() {
                     Ok(msg) => *slot = msg,
                     Err(e) => panic!(e),
@@ -412,7 +412,7 @@ mod tests {
         #[test]
         fn try_recv_fails_on_empty_connected_channel(cap in 1..=100usize, n in 1..=100usize) {
             let (_s, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
-            repeatn(r, n).for_each(|r| {
+            repeatn(r, n).for_each(|mut r| {
                 assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
             });
         }
@@ -420,7 +420,7 @@ mod tests {
         #[test]
         fn try_recv_fails_on_empty_disconnected_channel(cap in 1..=100usize, n in 1..=100usize) {
             let (_, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
-            repeatn(r, n).for_each(move |r| {
+            repeatn(r, n).for_each(move |mut r| {
                 assert_eq!(r.try_recv(), Err(TryRecvError::Disconnected));
             });
         }
@@ -430,7 +430,7 @@ mod tests {
     proptest! {
         #[test]
         fn sink(cap in 1..=100usize, mut msgs in vec_deque("[a-z]", 1..=100)) {
-            let (mut tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
+            let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
             let overwritten = msgs.len() - min(msgs.len(), cap);
 
             assert_eq!(block_on(tx.send_all(&mut msgs.clone())), Ok(()));
@@ -445,7 +445,7 @@ mod tests {
 
         #[test]
         fn stream(cap in 1..=100usize, mut msgs in vec_deque("[a-z]", 1..=100)) {
-            let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
+            let (mut tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
             let overwritten = msgs.len() - min(msgs.len(), cap);
 
             for msg in msgs.iter().cloned() {
@@ -489,7 +489,7 @@ mod tests {
                 }
 
                 for _ in 0..n {
-                    let tx = tx.clone();
+                    let mut tx = tx.clone();
                     s.spawn(move |_| assert_eq!(tx.send(42), Ok(())));
                 }
             });

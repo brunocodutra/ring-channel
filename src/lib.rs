@@ -27,7 +27,7 @@
 //! use std::num::NonZeroUsize;
 //!
 //! // Open the channel.
-//! let (tx, rx) = ring_channel(NonZeroUsize::new(1).unwrap());
+//! let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(1).unwrap());
 //!
 //! // Send a message through the inbound endpoint.
 //! tx.send("Hello, world!").unwrap();
@@ -52,10 +52,10 @@
 //! use std::{num::NonZeroUsize, thread};
 //!
 //! // Open the channel.
-//! let (tx1, rx1) = ring_channel(NonZeroUsize::new(1).unwrap());
+//! let (mut tx1, mut rx1) = ring_channel(NonZeroUsize::new(1).unwrap());
 //!
-//! let tx2 = tx1.clone();
-//! let rx2 = rx1.clone();
+//! let mut tx2 = tx1.clone();
+//! let mut rx2 = rx1.clone();
 //!
 //! // Spawn a thread that echoes any message it receives.
 //! thread::spawn(move || loop {
@@ -86,10 +86,10 @@
 //! use ring_channel::*;
 //! use std::{num::NonZeroUsize, thread};
 //!
-//! let (tx1, rx) = ring_channel(NonZeroUsize::new(3).unwrap());
+//! let (mut tx1, mut rx) = ring_channel(NonZeroUsize::new(3).unwrap());
 //!
-//! let tx2 = tx1.clone();
-//! let tx3 = tx2.clone();
+//! let mut tx2 = tx1.clone();
+//! let mut tx3 = tx2.clone();
 //!
 //! tx1.send(1).unwrap();
 //! tx2.send(2).unwrap();
@@ -124,7 +124,7 @@
 //!     use std::{num::NonZeroUsize, thread};
 //!
 //!     // Open the channel.
-//!     let (mut tx, rx) = ring_channel(NonZeroUsize::new(13).unwrap());
+//!     let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(13).unwrap());
 //!
 //!     let message = &['H', 'e', 'l', 'l', 'o', ',', ' ', 'w', 'o', 'r', 'l', 'd', '!'];
 //!
