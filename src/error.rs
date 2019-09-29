@@ -4,7 +4,7 @@ use std::{error, fmt};
 #[cfg(test)]
 use proptest_derive::Arbitrary;
 
-/// An error that may be returned from [`RingSender::send`].
+/// An error that may be returned by [`RingSender::send`].
 ///
 /// [`RingSender::send`]: struct.RingSender.html#method.send
 #[derive(Derivative)]
@@ -24,7 +24,28 @@ impl<T> fmt::Display for SendError<T> {
 
 impl<T: Send> error::Error for SendError<T> {}
 
-/// An error that may be returned from [`RingReceiver::try_recv`].
+/// An error that may be returned by [`RingReceiver::recv`].
+///
+/// [`RingReceiver::recv`]: struct.RingReceiver.html#method.recv
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(test, derive(Arbitrary))]
+pub enum RecvError {
+    /// No messages pending in the internal buffer and the channel is disconnected.
+    Disconnected,
+}
+
+impl fmt::Display for RecvError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use RecvError::*;
+        match self {
+            Disconnected => "receiving on an empty and disconnected channel".fmt(f),
+        }
+    }
+}
+
+impl error::Error for RecvError {}
+
+/// An error that may be returned by [`RingReceiver::try_recv`].
 ///
 /// [`RingReceiver::try_recv`]: struct.RingReceiver.html#method.try_recv
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -57,6 +78,14 @@ mod tests {
     proptest! {
         #[test]
         fn send_error_implements_error_trait(err: SendError<()>) {
+            assert_eq!(
+                format!("{}", err),
+                format!("{}", Box::<dyn error::Error>::from(err))
+            );
+        }
+
+        #[test]
+        fn recv_error_implements_error_trait(err: RecvError) {
             assert_eq!(
                 format!("{}", err),
                 format!("{}", Box::<dyn error::Error>::from(err))
