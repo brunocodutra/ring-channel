@@ -30,6 +30,7 @@ smallvec = "0.6.10"
 
 [dev-dependencies]
 criterion = "0.3.0"
+mockall = "0.5.1"
 proptest = "0.9.4"
 rayon = "1.2.0"
 
