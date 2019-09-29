@@ -1,6 +1,6 @@
 # RingChannel [![crate.badge]][crate.home] [![docs.badge]][docs.home] [![codecov.badge]][codecov.home]
 
-Never blocking, bounded MPMC channel abstraction on top of a ring buffer.
+Bounded MPMC channel abstraction on top of a ring buffer.
 
 ## Using RingChannel
 

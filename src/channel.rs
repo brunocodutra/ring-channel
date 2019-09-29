@@ -1,6 +1,6 @@
 use crate::{control::*, error::*};
 use derivative::Derivative;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::*;
 use std::{mem::ManuallyDrop, num::NonZeroUsize};
 
 #[cfg(feature = "futures_api")]
@@ -30,8 +30,17 @@ impl<T> RingSender<T> {
     ///
     /// [`SendError::Disconnected`]: enum.SendError.html#variant.Disconnected
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
-        if self.handle.connected.load(Ordering::Relaxed) {
+        if self.handle.receivers.load(Ordering::Relaxed) > 0 {
             self.handle.buffer.push(value);
+
+            // A full memory barrier is necessary to prevent waitlist loads
+            // from being reordered before the buffer stores.
+            #[cfg(feature = "futures_api")]
+            fence(Ordering::SeqCst);
+
+            #[cfg(feature = "futures_api")]
+            self.handle.waitlist.wake();
+
             Ok(())
         } else {
             Err(SendError::Disconnected(value))
@@ -51,6 +60,14 @@ impl<T> Drop for RingSender<T> {
     fn drop(&mut self) {
         // Synchronizes with other senders.
         if self.handle.senders.fetch_sub(1, Ordering::AcqRel) == 1 {
+            // A full memory barrier is necessary to prevent waitlist loads
+            // from being reordered before senders stores.
+            #[cfg(feature = "futures_api")]
+            fence(Ordering::SeqCst);
+
+            #[cfg(feature = "futures_api")]
+            self.handle.waitlist.wake();
+
             // Synchronizes the last sender and receiver with each other.
             if !self.handle.connected.swap(false, Ordering::AcqRel) {
                 unsafe { ManuallyDrop::drop(&mut self.handle) }
@@ -104,10 +121,10 @@ impl<T> RingReceiver<T> {
     /// [`TryRecvError::Disconnected`]: enum.TryRecvError.html#variant.Disconnected
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         self.handle.buffer.pop().ok_or_else(|| {
-            if !self.handle.connected.load(Ordering::Relaxed) {
-                TryRecvError::Disconnected
-            } else {
+            if self.handle.senders.load(Ordering::Relaxed) > 0 {
                 TryRecvError::Empty
+            } else {
+                TryRecvError::Disconnected
             }
         })
     }
@@ -142,9 +159,18 @@ impl<T> Stream for RingReceiver<T> {
             Ok(msg) => Poll::Ready(Some(msg)),
             Err(TryRecvError::Disconnected) => Poll::Ready(None),
             Err(TryRecvError::Empty) => {
-                // Keep polling thread awake.
-                ctx.waker().wake_by_ref();
-                Poll::Pending
+                self.handle.waitlist.wait(ctx.waker().clone());
+
+                // A full memory barrier is necessary to prevent the following loads
+                // from being reordered before waitlist stores.
+                fence(Ordering::SeqCst);
+
+                // Look at the buffer again in case a new message has been sent in the meantime.
+                match self.try_recv() {
+                    Ok(msg) => Poll::Ready(Some(msg)),
+                    Err(TryRecvError::Disconnected) => Poll::Ready(None),
+                    Err(TryRecvError::Empty) => Poll::Pending,
+                }
             }
         }
     }

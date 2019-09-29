@@ -4,6 +4,12 @@ use derivative::Derivative;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{ops::Deref, ptr::NonNull};
 
+#[cfg(feature = "futures_api")]
+use crate::waitlist::*;
+
+#[cfg(feature = "futures_api")]
+use std::task::Waker;
+
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""))]
 pub(super) struct ControlBlock<T> {
@@ -11,6 +17,9 @@ pub(super) struct ControlBlock<T> {
     pub(super) receivers: CachePadded<AtomicUsize>,
     pub(super) connected: AtomicBool,
     pub(super) buffer: RingBuffer<T>,
+
+    #[cfg(feature = "futures_api")]
+    pub(super) waitlist: Waitlist<Waker>,
 }
 
 impl<T> ControlBlock<T> {
@@ -20,6 +29,9 @@ impl<T> ControlBlock<T> {
             receivers: CachePadded::new(AtomicUsize::new(1)),
             connected: AtomicBool::new(true),
             buffer: RingBuffer::new(capacity),
+
+            #[cfg(feature = "futures_api")]
+            waitlist: Waitlist::new(),
         }
     }
 }
