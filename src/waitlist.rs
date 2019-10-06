@@ -23,7 +23,7 @@ pub(super) struct Waitlist<W> {
     wakers: CachePadded<Mutex<SmallVec<[W; 6]>>>,
 }
 
-impl<W> Waitlist<W> {
+impl<W: Wake> Waitlist<W> {
     pub(super) fn wait(&self, waker: W) {
         {
             self.wakers.lock().push(waker);
@@ -31,9 +31,7 @@ impl<W> Waitlist<W> {
 
         self.empty.store(false, Ordering::Release);
     }
-}
 
-impl<W: Wake> Waitlist<W> {
     pub(super) fn wake(&self) {
         if !self.empty.swap(true, Ordering::Acquire) {
             // Drain all wakers in case any has become stale.
@@ -49,12 +47,6 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use rayon::scope;
-    use std::{mem::size_of, task::Waker};
-
-    #[test]
-    fn waitlist_of_wakers_does_not_take_extra_space() {
-        assert_eq!(size_of::<Waitlist::<()>>(), size_of::<Waitlist::<Waker>>());
-    }
 
     #[test]
     fn waitlist_starts_empty() {
