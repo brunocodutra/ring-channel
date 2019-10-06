@@ -1,36 +1,17 @@
 use criterion::*;
-use rayon::{current_num_threads, scope};
+use rayon::iter::*;
 use ring_channel::*;
-use std::{cmp::max, num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
 fn concurrency(c: &mut Criterion) {
     let cardinality = 10000;
-    let concurrency = current_num_threads();
 
     c.bench(
         "concurrency",
         Benchmark::new(cardinality.to_string(), move |b| {
             b.iter_batched_ref(
-                || ring_channel::<usize>(NonZeroUsize::new(1).unwrap()),
-                |(tx, rx)| {
-                    scope(move |s| {
-                        for _ in 0..max(concurrency / 2, 1) {
-                            let tx = tx.clone();
-                            s.spawn(move |_| {
-                                for _ in 0..cardinality / concurrency {
-                                    drop(tx.clone());
-                                }
-                            });
-
-                            let rx = rx.clone();
-                            s.spawn(move |_| {
-                                for _ in 0..cardinality / concurrency {
-                                    drop(rx.clone());
-                                }
-                            });
-                        }
-                    })
-                },
+                || ring_channel::<()>(NonZeroUsize::new(1).unwrap()),
+                |(tx, rx)| repeatn((tx.clone(), rx.clone()), cardinality).for_each(drop),
                 BatchSize::SmallInput,
             );
         })

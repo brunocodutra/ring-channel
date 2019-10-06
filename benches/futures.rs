@@ -1,34 +1,43 @@
 use criterion::*;
-use futures::{executor::*, prelude::*, stream::iter};
-use rayon::{current_num_threads, scope};
+use futures::{executor::*, future::*, prelude::*, stream::iter, stream::*, task::*};
+use rayon::current_num_threads;
 use ring_channel::*;
 use std::{cmp::max, num::NonZeroUsize};
 
-fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
+fn bench(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
     ParameterizedBenchmark::new(
         format!("{}x{}x{}", m, n, msgs),
         move |b, &cap| {
+            let mut pool = ThreadPool::new().unwrap();
+
             b.iter_batched(
                 || {
                     let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
                     (vec![tx; m], vec![rx; n])
                 },
-                |(txs, rxs)| {
-                    scope(move |s| {
-                        for rx in rxs {
-                            s.spawn(move |_| for _ in block_on_stream(rx) {});
-                        }
-
-                        for mut tx in txs {
-                            s.spawn(move |_| {
-                                let mut data = iter(1..=msgs / m)
-                                    .map(NonZeroUsize::new)
-                                    .map(Option::unwrap);
-
-                                block_on(tx.send_all(&mut data)).unwrap();
-                            });
-                        }
-                    })
+                move |(mut txs, mut rxs)| {
+                    block_on(join(
+                        join_all(
+                            rxs.drain(..)
+                                .map(StreamExt::collect::<Vec<_>>)
+                                .map(|fut| pool.spawn_with_handle(fut))
+                                .map(Result::unwrap),
+                        ),
+                        join_all(
+                            txs.drain(..)
+                                .enumerate()
+                                .map(|(a, tx)| {
+                                    iter(1..=msgs / m)
+                                        .map(move |b| a * msgs / m + b)
+                                        .map(NonZeroUsize::new)
+                                        .map(Option::unwrap)
+                                        .map(Ok)
+                                        .forward(tx)
+                                })
+                                .map(|fut| pool.spawn_with_handle(fut))
+                                .map(Result::unwrap),
+                        ),
+                    ));
                 },
                 BatchSize::SmallInput,
             );
@@ -40,21 +49,21 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
 
 fn mpmc(c: &mut Criterion) {
     let cardinality = max(current_num_threads() / 2, 1);
-    c.bench("futures/mpmc", throughput(cardinality, cardinality, 1000));
+    c.bench("futures/mpmc", bench(cardinality, cardinality, 500));
 }
 
 fn mpsc(c: &mut Criterion) {
     let cardinality = max(current_num_threads() - 1, 1);
-    c.bench("futures/mpsc", throughput(cardinality, 1, 1000));
+    c.bench("futures/mpsc", bench(cardinality, 1, 500));
 }
 
 fn spmc(c: &mut Criterion) {
     let cardinality = max(current_num_threads() - 1, 1);
-    c.bench("futures/spmc", throughput(1, cardinality, 50));
+    c.bench("futures/spmc", bench(1, cardinality, 500));
 }
 
 fn spsc(c: &mut Criterion) {
-    c.bench("futures/spsc", throughput(1, 1, 1000));
+    c.bench("futures/spsc", bench(1, 1, 500));
 }
 
 criterion_group!(benches, mpmc, mpsc, spmc, spsc);

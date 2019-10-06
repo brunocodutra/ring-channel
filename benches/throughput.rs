@@ -3,7 +3,7 @@ use rayon::{current_num_threads, scope};
 use ring_channel::*;
 use std::{cmp::max, num::NonZeroUsize, thread};
 
-fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
+fn bench(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
     ParameterizedBenchmark::new(
         format!("{}x{}x{}", m, n, msgs),
         move |b, &cap| {
@@ -12,9 +12,9 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
                     let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
                     (vec![tx; m], vec![rx; n])
                 },
-                |(txs, rxs)| {
+                |(mut txs, mut rxs)| {
                     scope(move |s| {
-                        for mut rx in rxs {
+                        rxs.drain(..).for_each(|mut rx| {
                             s.spawn(move |_| loop {
                                 match rx.try_recv() {
                                     Ok(_) => continue,
@@ -22,15 +22,17 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
                                     Err(TryRecvError::Empty) => thread::yield_now(),
                                 }
                             });
-                        }
+                        });
 
-                        for mut tx in txs {
+                        txs.drain(..).enumerate().for_each(|(a, mut tx)| {
                             s.spawn(move |_| {
-                                for msg in 1..=msgs / m {
-                                    tx.send(NonZeroUsize::new(msg).unwrap()).unwrap();
-                                }
+                                (1..=msgs / m)
+                                    .map(|b| a * msgs / m + b)
+                                    .map(NonZeroUsize::new)
+                                    .map(Option::unwrap)
+                                    .for_each(|msg| tx.send(msg).unwrap());
                             });
-                        }
+                        });
                     })
                 },
                 BatchSize::SmallInput,
@@ -43,21 +45,21 @@ fn throughput(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> 
 
 fn mpmc(c: &mut Criterion) {
     let cardinality = max(current_num_threads() / 2, 1);
-    c.bench("mpmc", throughput(cardinality, cardinality, 1000));
+    c.bench("throughput/mpmc", bench(cardinality, cardinality, 1000));
 }
 
 fn mpsc(c: &mut Criterion) {
     let cardinality = max(current_num_threads() - 1, 1);
-    c.bench("mpsc", throughput(cardinality, 1, 1000));
+    c.bench("throughput/mpsc", bench(cardinality, 1, 1000));
 }
 
 fn spmc(c: &mut Criterion) {
     let cardinality = max(current_num_threads() - 1, 1);
-    c.bench("spmc", throughput(1, cardinality, 1000));
+    c.bench("throughput/spmc", bench(1, cardinality, 1000));
 }
 
 fn spsc(c: &mut Criterion) {
-    c.bench("spsc", throughput(1, 1, 1000));
+    c.bench("throughput/spsc", bench(1, 1, 1000));
 }
 
 criterion_group!(benches, mpmc, mpsc, spmc, spsc);
