@@ -55,7 +55,7 @@ jobs:
       with:
         rust-version: nightly
     - run: cargo +nightly install cargo-tarpaulin
-    - run: for i in 0 1 2; do cargo +nightly tarpaulin --all-features --out Xml && break; done
+    - run: for i in 0 1 2 3 4 5 6 7 8 9; do cargo +nightly tarpaulin --all-features --out Xml && break; done
     - run: bash <(curl -s https://codecov.io/bash) -C $GITHUB_SHA -B ${GITHUB_REF#refs/heads/} -Z
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
