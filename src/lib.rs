@@ -11,7 +11,7 @@
 //! producer threads is not desirable.
 //!
 //! * One example is a rendering GUI thread that runs at a fixed rate of frames per second and
-//! which recives the current state of the application through the channel for display.
+//! which receives the current state of the application through the channel for display.
 //!
 //! * Another example is video streamer that sends frames across threads for display.
 //! If the consuming thread experiences lag, the producing threads are at risk of overflowing the
@@ -101,7 +101,7 @@
 //! assert_eq!(rx.recv(), Ok(2));
 //! assert_eq!(rx.recv(), Ok(3));
 //!
-//! // Finally, the channel reports itself as disconnectd.
+//! // Finally, the channel reports itself as disconnected.
 //! assert_eq!(rx.recv(), Err(RecvError::Disconnected));
 //! ```
 //!
