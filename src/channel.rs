@@ -485,7 +485,8 @@ mod tests {
             let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
             let overwritten = msgs.len() - min(msgs.len(), cap);
 
-            assert_eq!(block_on(tx.send_all(&mut msgs.clone())), Ok(()));
+            let mut st = stream::iter(msgs.clone()).map(|msg| Ok(msg));
+            assert_eq!(block_on(tx.send_all(&mut st)), Ok(()));
 
             drop(tx); // hang-up
 
@@ -561,7 +562,7 @@ mod tests {
                     });
                 }
 
-                let mut msgs = stream::iter(vec![42; n]);
+                let mut msgs = stream::iter(vec![42; n]).map(|msg| Ok(msg));
                 s.spawn(move |_| assert_eq!(block_on(tx.send_all(&mut msgs)), Ok(())));
             });
         }
@@ -615,7 +616,7 @@ mod tests {
                     });
                 }
 
-                let mut msgs = stream::iter(vec![42; n]);
+                let mut msgs = stream::iter(vec![42; n]).map(|msg| Ok(msg));
                 s.spawn(move |_| assert_eq!(block_on(tx.send_all(&mut msgs)), Ok(())));
             });
         }

@@ -128,7 +128,7 @@
 //!
 //!     thread::spawn(move || {
 //!         // Send the stream of characters through the Sink.
-//!         block_on(tx.send_all(&mut stream::iter(message))).unwrap();
+//!         block_on(tx.send_all(&mut stream::iter(message).map(|msg| Ok(msg)))).unwrap();
 //!     });
 //!
 //!     // Receive the stream of characters through the outbound endpoint.
