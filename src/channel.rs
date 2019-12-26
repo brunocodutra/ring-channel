@@ -209,45 +209,43 @@ impl<T> Stream for RingReceiver<T> {
 /// use std::thread;
 /// use std::time::{Duration, Instant};
 ///
-/// fn main() {
-///     // Open a channel to transmit the time elapsed since the beginning of the countdown.
-///     // We only need a buffer of size 1, since we're only interested in the current value.
-///     let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(1).unwrap());
+/// // Open a channel to transmit the time elapsed since the beginning of the countdown.
+/// // We only need a buffer of size 1, since we're only interested in the current value.
+/// let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(1).unwrap());
 ///
-///     thread::spawn(move || {
-///         let countdown = Instant::now() + Duration::from_secs(10);
+/// thread::spawn(move || {
+///     let countdown = Instant::now() + Duration::from_secs(10);
 ///
-///         // Update the channel with the time elapsed so far.
-///         while let Ok(_) = tx.send(countdown - Instant::now()) {
+///     // Update the channel with the time elapsed so far.
+///     while let Ok(_) = tx.send(countdown - Instant::now()) {
 ///
-///             // We only need millisecond precision.
-///             thread::sleep(Duration::from_millis(1));
+///         // We only need millisecond precision.
+///         thread::sleep(Duration::from_millis(1));
 ///
-///             if Instant::now() > countdown {
-///                 break;
-///             }
-///         }
-///     });
-///
-///     loop {
-///         match rx.recv() {
-///             // Print the current time elapsed.
-///             Ok(timer) => {
-///                 print!("\r{:02}.{:03}", timer.as_secs(), timer.as_millis() % 1000);
-///
-///                 if timer <= Duration::from_millis(6600) {
-///                     print!(" - Main engine start                           ");
-///                 } else {
-///                     print!(" - Activate main engine hydrogen burnoff system");
-///                 }
-///             }
-///
-///             Err(RecvError::Disconnected) => break,
+///         if Instant::now() > countdown {
+///             break;
 ///         }
 ///     }
+/// });
 ///
-///     println!("\r00.0000 - Solid rocket booster ignition and liftoff!")
+/// loop {
+///     match rx.recv() {
+///         // Print the current time elapsed.
+///         Ok(timer) => {
+///             print!("\r{:02}.{:03}", timer.as_secs(), timer.as_millis() % 1000);
+///
+///             if timer <= Duration::from_millis(6600) {
+///                 print!(" - Main engine start                           ");
+///             } else {
+///                 print!(" - Activate main engine hydrogen burnoff system");
+///             }
+///         }
+///
+///         Err(RecvError::Disconnected) => break,
+///     }
 /// }
+///
+/// println!("\r00.0000 - Solid rocket booster ignition and liftoff!")
 /// ```
 pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T>) {
     let l = ManuallyDrop::new(ControlBlockRef::new(capacity.get()));
@@ -294,6 +292,7 @@ mod tests {
     #[test]
     fn cloning_sender_increments_senders() {
         let (s, _r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        #[allow(clippy::redundant_clone)]
         let x = s.clone();
         assert_eq!(x.handle.senders.load(Ordering::Relaxed), 2);
         assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 1);
@@ -302,6 +301,7 @@ mod tests {
     #[test]
     fn cloning_receiver_increments_receivers_counter() {
         let (_s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        #[allow(clippy::redundant_clone)]
         let x = r.clone();
         assert_eq!(x.handle.senders.load(Ordering::Relaxed), 1);
         assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 2);
