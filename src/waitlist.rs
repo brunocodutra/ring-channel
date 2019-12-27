@@ -35,7 +35,7 @@ impl<W: Wake> Waitlist<W> {
     pub(super) fn wake(&self) {
         if !self.empty.swap(true, Ordering::Acquire) {
             // Drain all wakers in case any has become stale.
-            for waker in self.wakers.lock().drain() {
+            for waker in self.wakers.lock().drain(..) {
                 waker.wake();
             }
         }
