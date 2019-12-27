@@ -2,7 +2,7 @@ use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use smallvec::SmallVec;
 use spin::Mutex;
-use std::{sync::atomic::*, task::Waker};
+use std::{mem::replace, sync::atomic::*, task::Waker};
 
 #[cfg_attr(test, mockall::automock)]
 pub(super) trait Wake {
@@ -35,7 +35,9 @@ impl<W: Wake> Waitlist<W> {
     pub(super) fn wake(&self) {
         if !self.empty.swap(true, Ordering::Acquire) {
             // Drain all wakers in case any has become stale.
-            for waker in self.wakers.lock().drain(..) {
+            let wakers = replace(&mut *self.wakers.lock(), Default::default());
+            // Important: do not inline `wakers` to ensure the lock is dropped.
+            for waker in wakers {
                 waker.wake();
             }
         }
