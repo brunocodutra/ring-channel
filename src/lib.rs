@@ -128,7 +128,7 @@
 //!
 //!     thread::spawn(move || {
 //!         // Send the stream of characters through the Sink.
-//!         block_on(tx.send_all(&mut stream::iter(message))).unwrap();
+//!         block_on(tx.send_all(&mut stream::iter(message).map(Ok))).unwrap();
 //!     });
 //!
 //!     // Receive the stream of characters through the outbound endpoint.
@@ -138,7 +138,7 @@
 //!
 //! [`RingSender`]: struct.RingSender.html
 //! [`RingReceiver`]: struct.RingReceiver.html
-//! [futures-rs]: https://crates.io/crates/futures-preview
+//! [futures-rs]: https://crates.io/crates/futures
 
 mod buffer;
 mod channel;

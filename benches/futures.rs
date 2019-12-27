@@ -8,7 +8,7 @@ fn bench(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
     ParameterizedBenchmark::new(
         format!("{}x{}x{}", m, n, msgs),
         move |b, &cap| {
-            let mut pool = ThreadPool::new().unwrap();
+            let pool = ThreadPool::new().unwrap();
 
             b.iter_batched(
                 || {
