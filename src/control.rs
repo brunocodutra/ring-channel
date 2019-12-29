@@ -61,13 +61,11 @@ impl<T> Deref for ControlBlockRef<T> {
 
 impl<T> Drop for ControlBlockRef<T> {
     fn drop(&mut self) {
-        unsafe {
-            debug_assert!(!self.connected.load(Ordering::Relaxed));
-            debug_assert_eq!(self.senders.load(Ordering::Relaxed), 0);
-            debug_assert_eq!(self.receivers.load(Ordering::Relaxed), 0);
+        debug_assert!(!self.connected.load(Ordering::Relaxed));
+        debug_assert_eq!(self.senders.load(Ordering::Relaxed), 0);
+        debug_assert_eq!(self.receivers.load(Ordering::Relaxed), 0);
 
-            Box::from_raw(&**self as *const ControlBlock<T> as *mut ControlBlock<T>);
-        }
+        unsafe { Box::from_raw(&**self as *const ControlBlock<T> as *mut ControlBlock<T>) };
     }
 }
 
