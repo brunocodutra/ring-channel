@@ -29,12 +29,12 @@ impl<T> RingSender<T> {
     /// * If the channel is disconnected, [`SendError::Disconnected`] is returned.
     ///
     /// [`SendError::Disconnected`]: enum.SendError.html#variant.Disconnected
-    pub fn send(&mut self, value: T) -> Result<(), SendError<T>> {
+    pub fn send(&mut self, message: T) -> Result<(), SendError<T>> {
         if self.handle.receivers.load(Ordering::Relaxed) > 0 {
-            self.handle.buffer.push(value);
+            self.handle.buffer.push(message);
 
             // A full memory barrier is necessary to prevent waitlist loads
-            // from being reordered before the buffer stores.
+            // from being reordered before storing the message.
             #[cfg(feature = "futures_api")]
             fence(Ordering::SeqCst);
 
@@ -43,7 +43,7 @@ impl<T> RingSender<T> {
 
             Ok(())
         } else {
-            Err(SendError::Disconnected(value))
+            Err(SendError::Disconnected(message))
         }
     }
 }
@@ -61,7 +61,7 @@ impl<T> Drop for RingSender<T> {
         // Synchronizes with other senders.
         if self.handle.senders.fetch_sub(1, Ordering::AcqRel) == 1 {
             // A full memory barrier is necessary to prevent waitlist loads
-            // from being reordered before senders stores.
+            // from being reordered before updating senders.
             #[cfg(feature = "futures_api")]
             fence(Ordering::SeqCst);
 
@@ -176,7 +176,7 @@ impl<T> Stream for RingReceiver<T> {
                 self.handle.waitlist.wait(ctx.waker().clone());
 
                 // A full memory barrier is necessary to prevent the following loads
-                // from being reordered before waitlist stores.
+                // from being reordered before storing the waker.
                 fence(Ordering::SeqCst);
 
                 // Look at the buffer again in case a new message has been sent in the meantime.
