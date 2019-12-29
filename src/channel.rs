@@ -22,6 +22,10 @@ pub struct RingSender<T> {
 unsafe impl<T: Send> Send for RingSender<T> {}
 
 impl<T> RingSender<T> {
+    fn new(handle: ManuallyDrop<ControlBlockRef<T>>) -> Self {
+        Self { handle }
+    }
+
     /// Sends a message through the channel without blocking.
     ///
     /// * If the channel is not disconnected, the message is pushed into the internal ring buffer.
@@ -50,9 +54,8 @@ impl<T> RingSender<T> {
 
 impl<T> Clone for RingSender<T> {
     fn clone(&self) -> Self {
-        let handle = self.handle.clone();
-        handle.senders.fetch_add(1, Ordering::Relaxed);
-        Self { handle }
+        self.handle.senders.fetch_add(1, Ordering::Relaxed);
+        RingSender::new(self.handle.clone())
     }
 }
 
@@ -110,6 +113,10 @@ pub struct RingReceiver<T> {
 unsafe impl<T: Send> Send for RingReceiver<T> {}
 
 impl<T> RingReceiver<T> {
+    fn new(handle: ManuallyDrop<ControlBlockRef<T>>) -> Self {
+        Self { handle }
+    }
+
     /// Receives a message through the channel.
     ///
     /// * If the internal ring buffer isn't empty, the oldest pending message is returned.
@@ -146,9 +153,8 @@ impl<T> RingReceiver<T> {
 
 impl<T> Clone for RingReceiver<T> {
     fn clone(&self) -> Self {
-        let handle = self.handle.clone();
-        handle.receivers.fetch_add(1, Ordering::Relaxed);
-        Self { handle }
+        self.handle.receivers.fetch_add(1, Ordering::Relaxed);
+        RingReceiver::new(self.handle.clone())
     }
 }
 
@@ -248,9 +254,8 @@ impl<T> Stream for RingReceiver<T> {
 /// println!("\r00.0000 - Solid rocket booster ignition and liftoff!")
 /// ```
 pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T>) {
-    let l = ManuallyDrop::new(ControlBlockRef::new(capacity.get()));
-    let r = l.clone();
-    (RingSender { handle: l }, RingReceiver { handle: r })
+    let handle = ManuallyDrop::new(ControlBlockRef::new(capacity.get()));
+    (RingSender::new(handle.clone()), RingReceiver::new(handle))
 }
 
 #[cfg(test)]
