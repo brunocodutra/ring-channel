@@ -1,9 +1,9 @@
 [package]
 name = "ring-channel"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2018"
 authors = ["Bruno Dutra <brunocodutra@gmail.com>"]
-description = "Never blocking, bounded MPMC channel abstraction on top of a ring buffer"
+description = "Bounded MPMC channel abstraction on top of a ring buffer"
 repository = "https://github.com/brunocodutra/ring-channel.git"
 license = "MIT"
 readme = "README.md"
