@@ -4,19 +4,21 @@
 //!
 //! This crate provides a flavor of message passing that favors throughput over lossless
 //! communication. Under the hood, [`ring_channel`] is just a thin abstraction layer on top of a
-//! multi-producer multi-consumer lock-free ring-buffer. Sending nor receiving messages never
-//! blocks, however messages can be lost if the internal buffer overflows, as incoming messages
-//! gradually overwrite older pending messages. This behavior is ideal for use-cases in which the
-//! consuming threads only care about the most up-to-date message and applying back pressure to
-//! producer threads is not desirable.
+//! multi-producer multi-consumer lock-free ring-buffer. Sending messages never blocks, however
+//! messages can be lost if the internal buffer overflows, as incoming messages gradually overwrite
+//! older pending messages. This behavior is ideal for use-cases in which the consuming threads
+//! only care about the most recent messages and applying back pressure to producer threads is
+//! not desirable.
 //!
-//! * One example is a rendering GUI thread that runs at a fixed rate of frames per second and
-//! which receives the current state of the application through the channel for display.
-//!
-//! * Another example is video streamer that sends frames across threads for display.
+//! * A classic example are video streamers that send frames across threads for display.
 //! If the consuming thread experiences lag, the producing threads are at risk of overflowing the
-//! communication buffer. Rather than panicking, it's often acceptable to skip frames without
-//! noticeable impact to the user experience.
+//! communication buffer. Rather than panicking, it's often acceptable to skip frames with little
+//! to no impact to the user experience.
+//!
+//! * Another example is a rendering GUI thread that runs at a fixed rate of frames per second and
+//! receives the current state of the application through a channel for display. Only the most
+//! up-to-date version of the application state matters at the point in time the GUI is refreshed,
+//! so there's no use in keeping a backlog of all intermediary state transitions.
 //!
 //! # Hello, world!
 //!
@@ -32,6 +34,26 @@
 //!
 //! // Receive the message through the outbound endpoint.
 //! assert_eq!(rx.recv(), Ok("Hello, world!"));
+//! ```
+//!
+//! # Overflowing the buffer
+//!
+//! ```rust
+//! use ring_channel::*;
+//! use std::num::NonZeroUsize;
+//!
+//! // Open the channel.
+//! let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(1).unwrap());
+//!
+//! // Send a message through the inbound endpoint.
+//! tx.send("Hello, world!").unwrap();
+//!
+//! // Since the buffer can hold at most one message in this case,
+//! // sending a second message overwrites the former.
+//! tx.send("Hello, universe!").unwrap();
+//!
+//! // Receive the message through the outbound endpoint.
+//! assert_eq!(rx.recv(), Ok("Hello, universe!"));
 //! ```
 //!
 //! # Communicating across threads
@@ -79,6 +101,7 @@
 //! use ring_channel::*;
 //! use std::{num::NonZeroUsize, thread};
 //!
+//! // Open the channel.
 //! let (mut tx1, mut rx) = ring_channel(NonZeroUsize::new(3).unwrap());
 //!
 //! let mut tx2 = tx1.clone();
@@ -88,7 +111,7 @@
 //! tx2.send(2).unwrap();
 //! tx3.send(3).unwrap();
 //!
-//! // All senders are dropped, so the channel becomes disconnected.
+//! // All senders are dropped and the channel becomes disconnected.
 //! drop((tx1, tx2, tx3));
 //!
 //! // Pending messages can still be received.
