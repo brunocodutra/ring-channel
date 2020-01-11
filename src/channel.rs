@@ -10,8 +10,6 @@ use futures::{executor::*, sink::Sink, stream::*, task::*};
 use std::pin::Pin;
 
 /// The sending end of a [`ring_channel`].
-///
-/// [`ring_channel`]: fn.ring_channel.html
 #[derive(Derivative, Eq, PartialEq)]
 #[derivative(Debug(bound = ""))]
 pub struct RingSender<T> {
@@ -31,8 +29,6 @@ impl<T> RingSender<T> {
     /// * If the channel is not disconnected, the message is pushed into the internal ring buffer.
     ///     * If the internal ring buffer is full, the oldest pending message is overwritten.
     /// * If the channel is disconnected, [`SendError::Disconnected`] is returned.
-    ///
-    /// [`SendError::Disconnected`]: enum.SendError.html#variant.Disconnected
     pub fn send(&mut self, message: T) -> Result<(), SendError<T>> {
         if self.handle.receivers.load(Ordering::Relaxed) > 0 {
             self.handle.buffer.push(message);
@@ -101,8 +97,6 @@ impl<T> Sink<T> for RingSender<T> {
 }
 
 /// The receiving end of a [`ring_channel`].
-///
-/// [`ring_channel`]: fn.ring_channel.html
 #[derive(Derivative, Eq, PartialEq)]
 #[derivative(Debug(bound = ""))]
 pub struct RingReceiver<T> {
@@ -124,8 +118,6 @@ impl<T> RingReceiver<T> {
     /// or the channel disconnects.
     /// * If the channel is disconnected and the internal ring buffer is empty,
     /// [`RecvError::Disconnected`] is returned.
-    ///
-    /// [`RecvError::Disconnected`]: enum.RecvError.html#variant.Disconnected
     #[cfg(feature = "futures_api")]
     pub fn recv(&mut self) -> Result<T, RecvError> {
         block_on(self.next()).ok_or(RecvError::Disconnected)
@@ -137,9 +129,6 @@ impl<T> RingReceiver<T> {
     /// * If the internal ring buffer is empty, [`TryRecvError::Empty`] is returned.
     /// * If the channel is disconnected and the internal ring buffer is empty,
     /// [`TryRecvError::Disconnected`] is returned.
-    ///
-    /// [`TryRecvError::Empty`]: enum.TryRecvError.html#variant.Empty
-    /// [`TryRecvError::Disconnected`]: enum.TryRecvError.html#variant.Disconnected
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         self.handle.buffer.pop().ok_or_else(|| {
             if self.handle.senders.load(Ordering::Relaxed) > 0 {

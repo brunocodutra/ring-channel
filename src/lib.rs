@@ -18,8 +18,6 @@
 //! communication buffer. Rather than panicking, it's often acceptable to skip frames without
 //! noticeable impact to the user experience.
 //!
-//! [`ring_channel`]: fn.ring_channel.html
-//!
 //! # Hello, world!
 //!
 //! ```rust
@@ -43,9 +41,6 @@
 //! respectively [`RingSender`] and [`RingReceiver`]. Cloning an endpoint produces a new
 //! handle of the same kind associated with the same channel.
 //! The channel lives as long as there is an endpoint associated with it.
-//!
-//! [`RingSender`]: struct.RingSender.html
-//! [`RingReceiver`]: struct.RingReceiver.html
 //!
 //! ```rust
 //! use ring_channel::*;
@@ -136,8 +131,6 @@
 //!     # }
 //!     ```
 //!
-//! [`RingSender`]: struct.RingSender.html
-//! [`RingReceiver`]: struct.RingReceiver.html
 //! [futures-rs]: https://crates.io/crates/futures
 
 mod buffer;
