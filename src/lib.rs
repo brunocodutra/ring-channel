@@ -100,36 +100,31 @@
 //! assert_eq!(rx.recv(), Err(RecvError::Disconnected));
 //! ```
 //!
-//! # Experimental Features
+//! # Futures API
 //!
-//! The following cargo feature flags are available:
-//! * `futures_api` (depends on nightly Rust)
+//! By default, [`RingSender`] implements [`futures::sink::Sink`] and
+//! [`RingReceiver`] implements [`futures::stream::Stream`].
 //!
-//!     Provides experimental implementations of Sink for [`RingSender`] and
-//!     Stream for [`RingReceiver`] based on [futures-rs].
+//! The cargo feature `futures_api` can be disabled to opt out of the dependency on [futures-rs].
 //!
-//!     ```rust
-//!     # {
-//!     #![cfg(feature = "futures_api")]
+//! ```rust
+//! use ring_channel::*;
+//! use futures::{executor::*, prelude::*, stream};
+//! use std::{num::NonZeroUsize, thread};
 //!
-//!     use ring_channel::*;
-//!     use futures::{executor::*, prelude::*, stream};
-//!     use std::{num::NonZeroUsize, thread};
+//! // Open the channel.
+//! let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(13).unwrap());
 //!
-//!     // Open the channel.
-//!     let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(13).unwrap());
+//! let message = &['H', 'e', 'l', 'l', 'o', ',', ' ', 'w', 'o', 'r', 'l', 'd', '!'];
 //!
-//!     let message = &['H', 'e', 'l', 'l', 'o', ',', ' ', 'w', 'o', 'r', 'l', 'd', '!'];
+//! thread::spawn(move || {
+//!     // Send the stream of characters through the Sink.
+//!     block_on(tx.send_all(&mut stream::iter(message).map(Ok))).unwrap();
+//! });
 //!
-//!     thread::spawn(move || {
-//!         // Send the stream of characters through the Sink.
-//!         block_on(tx.send_all(&mut stream::iter(message).map(Ok))).unwrap();
-//!     });
-//!
-//!     // Receive the stream of characters through the outbound endpoint.
-//!     assert_eq!(&block_on_stream(rx).collect::<String>(), "Hello, world!");
-//!     # }
-//!     ```
+//! // Receive the stream of characters through the outbound endpoint.
+//! assert_eq!(&block_on_stream(rx).collect::<String>(), "Hello, world!");
+//! ```
 //!
 //! [futures-rs]: https://crates.io/crates/futures
 
