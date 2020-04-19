@@ -11,8 +11,8 @@ cargo-fuzz = true
 
 [dependencies]
 futures = { version = "0.3.4", features = ["thread-pool"] }
-libfuzzer-sys = { version = "0.3.0", features = ["arbitrary-derive"] }
 lazy_static = "1.4.0"
+libfuzzer-sys = "0.3.2"
 
 [dependencies.ring-channel]
 path = ".."
