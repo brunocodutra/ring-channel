@@ -22,17 +22,17 @@ codecov = { repository = "brunocodutra/ring-channel" }
 
 [dependencies]
 crossbeam-queue = "0.2.1"
-crossbeam-utils = "0.7.0"
-derivative = "1.0.3"
+crossbeam-utils = "0.7.2"
+derivative = "2.1.1"
 futures = { version = "0.3.4", optional = true }
-smallvec = "1.2.0"
+smallvec = "1.3.0"
 spin = "0.5.2"
 
 [dev-dependencies]
 criterion = "0.3.1"
 futures = { version = "0.3.4", features = ["thread-pool"] }
-mockall = "0.6.0"
-proptest = "0.9.5"
+mockall = "0.7.0"
+proptest = "0.9.6"
 proptest-derive = "0.1.2"
 rayon = "1.3.0"
 
