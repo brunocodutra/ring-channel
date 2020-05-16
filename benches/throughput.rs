@@ -12,9 +12,9 @@ fn bench(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
                     let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
                     (vec![tx; m], vec![rx; n])
                 },
-                |(mut txs, mut rxs)| {
+                |(txs, rxs)| {
                     scope(move |s| {
-                        rxs.drain(..).for_each(|mut rx| {
+                        rxs.into_iter().for_each(|mut rx| {
                             s.spawn(move |_| loop {
                                 match rx.try_recv() {
                                     Ok(_) => continue,
@@ -24,10 +24,9 @@ fn bench(m: usize, n: usize, msgs: usize) -> ParameterizedBenchmark<usize> {
                             });
                         });
 
-                        txs.drain(..).enumerate().for_each(|(a, mut tx)| {
+                        txs.into_iter().enumerate().for_each(|(a, mut tx)| {
                             s.spawn(move |_| {
-                                (1..=msgs / m)
-                                    .map(|b| a * msgs / m + b)
+                                (a * msgs / m + 1..=(a + 1) * msgs / m)
                                     .map(NonZeroUsize::new)
                                     .map(Option::unwrap)
                                     .for_each(|msg| tx.send(msg).unwrap());
