@@ -45,7 +45,12 @@ fuzz_target!(|input: (Box<[u32]>, u16, u8, u8)| {
             ),
         ));
 
-        if receivers == 0 {
+        if senders == 0 {
+            assert!(
+                received.is_empty(),
+                "no data is received if there are no senders"
+            );
+        } else if receivers == 0 {
             assert_eq!(
                 results,
                 data.chunks(chunk_size)
@@ -57,22 +62,29 @@ fuzz_target!(|input: (Box<[u32]>, u16, u8, u8)| {
                     .chain(repeat(Ok(())))
                     .take(results.len())
                     .collect::<Vec<_>>(),
-                "Sending fails with disconnection error"
+                "sending fails with disconnection error if there are no receivers"
             );
-        } else if senders > 0 {
-            assert_eq!(results, vec![Ok(()); results.len()], "Sending succeeds");
+        } else {
+            assert_eq!(
+                results,
+                vec![Ok(()); results.len()],
+                "sending succeeds if there are both senders and receivers"
+            );
 
             if capacity.get() >= data.len() {
                 data.sort();
                 received.sort();
-                assert_eq!(received, data, "Data received equals data sent");
+                assert_eq!(
+                    received, data,
+                    "data received equals data sent if the buffer capacity is sufficient"
+                );
             } else {
                 let data: HashSet<_> = data.into_iter().collect();
                 let received: HashSet<_> = received.into_iter().collect();
                 assert_eq!(
                     received,
                     received.intersection(&data).cloned().collect(),
-                    "Data received is a subset of data sent"
+                    "data received is a subset of data sent if the buffer capacity is insufficient"
                 );
             }
         }
