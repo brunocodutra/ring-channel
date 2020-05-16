@@ -1,7 +1,7 @@
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use smallvec::SmallVec;
-use spin::Mutex;
+use spinning_top::Spinlock;
 use std::{mem::take, sync::atomic::*, task::Waker};
 
 pub(super) trait Wake {
@@ -25,7 +25,7 @@ impl Wake for Waker {
 pub(super) struct Waitlist<W> {
     #[derivative(Default(value = "AtomicBool::new(true)"))]
     empty: AtomicBool,
-    wakers: CachePadded<Mutex<SmallVec<[W; 6]>>>,
+    wakers: CachePadded<Spinlock<SmallVec<[W; 6]>>>,
 }
 
 impl<W: Wake> Waitlist<W> {
