@@ -9,7 +9,6 @@ pub(super) trait Wake {
     fn will_wake(&self, other: &Self) -> bool;
 }
 
-#[cfg_attr(tarpaulin, skip)]
 impl Wake for Waker {
     fn wake(self) {
         self.wake()
