@@ -34,7 +34,7 @@ futures = { version = "0.3.5", features = ["thread-pool"] }
 mockall = "0.8.1"
 proptest = "0.10.1"
 proptest-derive = "0.2.0"
-rayon = "1.4.0"
+rayon = "1.4.1"
 
 [[bench]]
 name = "concurrency"
