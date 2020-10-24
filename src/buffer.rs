@@ -1,4 +1,4 @@
-use crossbeam_queue::{ArrayQueue, PushError};
+use crossbeam_queue::ArrayQueue;
 use derivative::Derivative;
 
 type AtomicOption<T> = crossbeam_utils::atomic::AtomicCell<Option<T>>;
@@ -33,7 +33,7 @@ impl<T> RingBuffer<T> {
         use RingBuffer::*;
         match self {
             Queue(q) => {
-                while let Err(PushError(v)) = q.push(value) {
+                while let Err(v) = q.push(value) {
                     self.pop();
                     value = v;
                 }
@@ -48,7 +48,7 @@ impl<T> RingBuffer<T> {
     pub(super) fn pop(&self) -> Option<T> {
         use RingBuffer::*;
         match self {
-            Queue(q) => q.pop().ok(),
+            Queue(q) => q.pop(),
             Cell(c) => c.swap(None),
         }
     }
