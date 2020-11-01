@@ -10,7 +10,7 @@ edition = "2018"
 cargo-fuzz = true
 
 [dependencies]
-futures = { version = "0.3.4", features = ["thread-pool"] }
+futures = { version = "0.3.7", features = ["thread-pool"] }
 lazy_static = "1.4.0"
 libfuzzer-sys = "0.3.2"
 
