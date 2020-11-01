@@ -119,19 +119,3 @@ jobs:
       with:
         rust-version: stable
     - run: cargo +stable bench --all-features
-
-  upgrade:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
-    steps:
-    - uses: actions/checkout@master
-    - uses: hecrj/setup-rust-action@master
-      with:
-        rust-version: stable
-    - run: cargo +stable install cargo-edit
-    - run: cargo upgrade
-    - uses: peter-evans/create-pull-request@v2
-      with:
-        title: "Upgrade dependencies"
-        branch: "bot/upgrade"
-        commit-message: "cargo upgrade"
