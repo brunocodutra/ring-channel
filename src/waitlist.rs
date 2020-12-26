@@ -58,7 +58,7 @@ mod tests {
 
     mock! {
         Waker {}
-        trait Wake {
+        impl Wake for Waker {
             fn wake(self);
             fn will_wake(&self, other: &MockWaker) -> bool;
         }
