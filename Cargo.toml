@@ -21,11 +21,11 @@ futures_api = ["futures"]
 codecov = { repository = "brunocodutra/ring-channel" }
 
 [dependencies]
-crossbeam-queue = "0.3.0"
-crossbeam-utils = "0.8.0"
-derivative = "2.1.1"
-futures = { version = "0.3.7", optional = true }
-smallvec = "1.4.2"
+crossbeam-queue = "0.3.1"
+crossbeam-utils = "0.8.1"
+derivative = "2.2.0"
+futures = { version = "0.3.12", optional = true }
+smallvec = "1.6.1"
 spinning_top = "0.2.2"
 
 [dev-dependencies]
