@@ -1,6 +1,6 @@
 use criterion::*;
-use rayon::iter::*;
-use ring_channel::*;
+use rayon::iter::{repeatn, ParallelIterator};
+use ring_channel::ring_channel;
 use std::num::NonZeroUsize;
 
 fn concurrency(c: &mut Criterion) {
