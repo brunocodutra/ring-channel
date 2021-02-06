@@ -1,12 +1,12 @@
 use criterion::*;
-use rayon::{current_num_threads, scope};
-use ring_channel::*;
-use std::{cmp::max, num::NonZeroUsize, thread};
+use rayon::scope;
+use ring_channel::{ring_channel, TryRecvError};
+use std::{num::NonZeroUsize, thread};
 
 fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
     let mut group = c.benchmark_group(name);
 
-    for &cap in &[1, m + n, msgs] {
+    for &cap in &[1, msgs] {
         group.throughput(Throughput::Elements(msgs as u64));
         group.bench_function(format!("{}x{}x{}/{}", m, n, msgs, cap), move |b| {
             b.iter_batched(
@@ -43,18 +43,15 @@ fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
 }
 
 fn mpmc(c: &mut Criterion) {
-    let cardinality = max(current_num_threads() / 2, 1);
-    bench(c, "throughput/mpmc", cardinality, cardinality, 1000);
+    bench(c, "throughput/mpmc", 32, 32, 1000);
 }
 
 fn mpsc(c: &mut Criterion) {
-    let cardinality = max(current_num_threads() - 1, 1);
-    bench(c, "throughput/mpsc", cardinality, 1, 1000);
+    bench(c, "throughput/mpsc", 63, 1, 1000);
 }
 
 fn spmc(c: &mut Criterion) {
-    let cardinality = max(current_num_threads() - 1, 1);
-    bench(c, "throughput/spmc", 1, cardinality, 1000);
+    bench(c, "throughput/spmc", 1, 63, 1000);
 }
 
 fn spsc(c: &mut Criterion) {

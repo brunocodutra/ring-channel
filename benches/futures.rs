@@ -1,17 +1,18 @@
 use criterion::*;
-use futures::{executor::*, future::*, prelude::*, sink::*, stream::*, task::*};
+use futures::{future::join_all, prelude::*, sink::drain, stream::iter};
 use rayon::current_num_threads;
-use ring_channel::*;
-use std::{cmp::max, num::NonZeroUsize};
+use ring_channel::ring_channel;
+use smol::{block_on, spawn};
+use std::{env::set_var, num::NonZeroUsize};
 
 fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
+    set_var("SMOL_THREADS", current_num_threads().to_string());
+
     let mut group = c.benchmark_group(name);
 
-    for &cap in &[1, m + n, msgs] {
+    for &cap in &[1, msgs] {
         group.throughput(Throughput::Elements(msgs as u64));
         group.bench_function(format!("{}x{}x{}/{}", m, n, msgs, cap), move |b| {
-            let pool = ThreadPool::new().unwrap();
-
             b.iter_batched(
                 || {
                     let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
@@ -29,12 +30,12 @@ fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
                                 .forward(tx)
                                 .unwrap_or_else(|_| ())
                         })
-                        .map(|f| pool.spawn_with_handle(f).unwrap());
+                        .map(spawn);
 
                     let rxs = rxs
                         .into_iter()
                         .map(|rx| rx.map(Ok).forward(drain()).unwrap_or_else(|_| ()))
-                        .map(|f| pool.spawn_with_handle(f).unwrap());
+                        .map(spawn);
 
                     block_on(join_all(txs.chain(rxs)));
                 },
@@ -45,18 +46,15 @@ fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
 }
 
 fn mpmc(c: &mut Criterion) {
-    let cardinality = max(current_num_threads() / 2, 1);
-    bench(c, "futures/mpmc", cardinality, cardinality, 1000);
+    bench(c, "futures/mpmc", 32, 32, 1000);
 }
 
 fn mpsc(c: &mut Criterion) {
-    let cardinality = max(current_num_threads() - 1, 1);
-    bench(c, "futures/mpsc", cardinality, 1, 1000);
+    bench(c, "futures/mpsc", 63, 1, 1000);
 }
 
 fn spmc(c: &mut Criterion) {
-    let cardinality = max(current_num_threads() - 1, 1);
-    bench(c, "futures/spmc", 1, cardinality, 1000);
+    bench(c, "futures/spmc", 1, 63, 1000);
 }
 
 fn spsc(c: &mut Criterion) {

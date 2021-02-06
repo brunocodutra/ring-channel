@@ -94,7 +94,7 @@ jobs:
       with:
         rust-version: nightly
     - run: cargo +nightly install cargo-fuzz
-    - run: cargo +nightly fuzz run -s ${{ matrix.sanitizer }} fuzzer -- -max_total_time=120
+    - run: SMOL_THREADS=32 cargo +nightly fuzz run -s ${{ matrix.sanitizer }} fuzzer -- -max_total_time=120
 
   coverage:
     needs: [test]

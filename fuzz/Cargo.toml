@@ -10,9 +10,10 @@ edition = "2018"
 cargo-fuzz = true
 
 [dependencies]
-futures = { version = "0.3.7", features = ["thread-pool"] }
+futures = "0.3.7"
 lazy_static = "1.4.0"
 libfuzzer-sys = "0.3.2"
+smol = "1.2.5"
 
 [dependencies.ring-channel]
 path = ".."

@@ -1,14 +1,10 @@
 #![no_main]
 
-use futures::{executor::*, future::*, prelude::*, stream::*, task::*};
-use lazy_static::lazy_static;
+use futures::{future::*, prelude::*, stream::*};
 use libfuzzer_sys::fuzz_target;
 use ring_channel::*;
+use smol::{block_on, spawn};
 use std::{collections::HashSet, iter::repeat, num::NonZeroUsize};
-
-lazy_static! {
-    static ref POOL: ThreadPool = ThreadPool::new().unwrap();
-}
 
 fuzz_target!(|input: (Box<[u32]>, u16, u8, u8)| {
     let mut data = input.0;
@@ -27,21 +23,15 @@ fuzz_target!(|input: (Box<[u32]>, u16, u8, u8)| {
         };
 
         let (mut received, results) = block_on(join(
-            join_all(
-                rxs.into_iter()
-                    .map(StreamExt::collect::<Vec<_>>)
-                    .map(|fut| POOL.spawn_with_handle(fut))
-                    .map(Result::unwrap),
-            )
-            .map(IntoIterator::into_iter)
-            .map(Iterator::flatten)
-            .map(Iterator::collect::<Box<[_]>>),
+            join_all(rxs.into_iter().map(StreamExt::collect::<Vec<_>>).map(spawn))
+                .map(IntoIterator::into_iter)
+                .map(Iterator::flatten)
+                .map(Iterator::collect::<Box<[_]>>),
             join_all(
                 txs.into_iter()
                     .zip(data.chunks(chunk_size).chain(repeat([].as_ref())))
                     .map(|(tx, data)| iter(data.to_owned()).map(Ok).forward(tx))
-                    .map(|fut| POOL.spawn_with_handle(fut))
-                    .map(Result::unwrap),
+                    .map(spawn),
             ),
         ));
 
