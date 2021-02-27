@@ -32,7 +32,7 @@ spinning_top = "0.2.2"
 criterion = "0.3.4"
 mockall = "0.9.0"
 proptest = "1.0.0"
-proptest-derive = "0.2.0"
+proptest-derive = "0.3.0"
 rayon = "1.5.0"
 smol = "1.2.5"
 
