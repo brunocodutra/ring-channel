@@ -319,14 +319,14 @@ mod tests {
     fn channel_is_disconnected_if_there_are_no_senders() {
         let (_, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         assert_eq!(r.handle.senders.load(Ordering::Relaxed), 0);
-        assert_eq!(r.handle.connected.load(Ordering::Relaxed), false);
+        assert!(!r.handle.connected.load(Ordering::Relaxed));
     }
 
     #[test]
     fn channel_is_disconnected_if_there_are_no_receivers() {
         let (s, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         assert_eq!(s.handle.receivers.load(Ordering::Relaxed), 0);
-        assert_eq!(s.handle.connected.load(Ordering::Relaxed), false);
+        assert!(!s.handle.connected.load(Ordering::Relaxed));
     }
 
     proptest! {

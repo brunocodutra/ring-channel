@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn waitlist_starts_empty() {
         let waitlist = Waitlist::<MockWaker>::new();
-        assert_eq!(waitlist.empty.load(Ordering::Relaxed), true);
+        assert!(waitlist.empty.load(Ordering::Relaxed));
         assert_eq!(waitlist.wakers.lock().len(), 0);
     }
 
@@ -82,7 +82,7 @@ mod tests {
                 waitlist.wait(waker);
             }
 
-            assert_eq!(waitlist.empty.load(Ordering::Relaxed), false);
+            assert!(!waitlist.empty.load(Ordering::Relaxed));
             assert_eq!(waitlist.wakers.lock().len(), m);
         }
 
@@ -94,7 +94,7 @@ mod tests {
             waker.expect_will_wake().times(m).return_const(true);
             waitlist.wait(waker);
 
-            assert_eq!(waitlist.empty.load(Ordering::Relaxed), false);
+            assert!(!waitlist.empty.load(Ordering::Relaxed));
             assert_eq!(waitlist.wakers.lock().len(), 1);
 
             for _ in 0..m {
@@ -103,7 +103,7 @@ mod tests {
                 waitlist.wait(waker);
             }
 
-            assert_eq!(waitlist.empty.load(Ordering::Relaxed), false);
+            assert!(!waitlist.empty.load(Ordering::Relaxed));
             assert_eq!(waitlist.wakers.lock().len(), 1);
         }
 
