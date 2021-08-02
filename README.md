@@ -1,4 +1,4 @@
-# RingChannel [![crate.badge]][crate.home] [![docs.badge]][docs.home] [![codecov.badge]][codecov.home]
+# RingChannel [![docs.badge]][docs.home] [![codecov.badge]][codecov.home]
 
 Bounded MPMC channel abstraction on top of a ring buffer.
 
@@ -22,9 +22,6 @@ guidelines.
 ## License
 
 RingChannel is distributed under the terms of the MIT license, see [LICENSE] for details.
-
-[crate.home]:       https://crates.io/crates/ring-channel
-[crate.badge]:      https://meritbadge.herokuapp.com/ring-channel
 
 [docs.home]:        https://docs.rs/ring-channel
 [docs.badge]:       https://docs.rs/ring-channel/badge.svg
