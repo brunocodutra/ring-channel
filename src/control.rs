@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn control_block_starts_connected() {
         let ctrl = ControlBlock::<()>::new(1);
-        assert_eq!(ctrl.connected.load(Ordering::Relaxed), true);
+        assert!(ctrl.connected.load(Ordering::Relaxed));
     }
 
     #[test]
