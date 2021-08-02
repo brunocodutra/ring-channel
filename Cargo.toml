@@ -30,7 +30,7 @@ spinning_top = "0.2.2"
 
 [dev-dependencies]
 criterion = "0.3.4"
-mockall = "0.9.0"
+mockall = "0.10.2"
 proptest = "1.0.0"
 proptest-derive = "0.3.0"
 rayon = "1.5.0"
