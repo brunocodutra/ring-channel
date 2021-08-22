@@ -33,6 +33,7 @@
 //! tx.send("Hello, world!").unwrap();
 //!
 //! // Receive the message through the outbound endpoint.
+//! # #[cfg(feature = "futures_api")]
 //! assert_eq!(rx.recv(), Ok("Hello, world!"));
 //! ```
 //!
@@ -53,6 +54,7 @@
 //! tx.send("Hello, universe!").unwrap();
 //!
 //! // Receive the message through the outbound endpoint.
+//! # #[cfg(feature = "futures_api")]
 //! assert_eq!(rx.recv(), Ok("Hello, universe!"));
 //! ```
 //!
@@ -65,6 +67,7 @@
 //! The channel lives as long as there is an endpoint associated with it.
 //!
 //! ```rust
+//! # #[cfg(feature = "futures_api")] {
 //! use ring_channel::*;
 //! use std::{num::NonZeroUsize, thread};
 //!
@@ -88,6 +91,7 @@
 //!     // we might have received the direct message or the echo.
 //!     assert_eq!(msg, "Hello, world!");
 //! }
+//! # }
 //! ```
 //!
 //! # Disconnection
@@ -115,12 +119,12 @@
 //! drop((tx1, tx2, tx3));
 //!
 //! // Pending messages can still be received.
-//! assert_eq!(rx.recv(), Ok(1));
-//! assert_eq!(rx.recv(), Ok(2));
-//! assert_eq!(rx.recv(), Ok(3));
+//! assert_eq!(rx.try_recv(), Ok(1));
+//! assert_eq!(rx.try_recv(), Ok(2));
+//! assert_eq!(rx.try_recv(), Ok(3));
 //!
 //! // Finally, the channel reports itself as disconnected.
-//! assert_eq!(rx.recv(), Err(RecvError::Disconnected));
+//! assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
 //! ```
 //!
 //! # Futures API
@@ -131,6 +135,7 @@
 //! The cargo feature `futures_api` can be disabled to opt out of the dependency on [futures-rs].
 //!
 //! ```rust
+//! # #[cfg(feature = "futures_api")] {
 //! use ring_channel::*;
 //! use futures::{executor::*, prelude::*, stream};
 //! use std::{num::NonZeroUsize, thread};
@@ -147,6 +152,7 @@
 //!
 //! // Receive the stream of characters through the outbound endpoint.
 //! assert_eq!(&block_on_stream(rx).collect::<String>(), "Hello, world!");
+//! # }
 //! ```
 //!
 //! [futures-rs]: https://crates.io/crates/futures

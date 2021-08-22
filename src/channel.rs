@@ -224,7 +224,7 @@ impl<T> Stream for RingReceiver<T> {
 /// });
 ///
 /// loop {
-///     match rx.recv() {
+///     match rx.try_recv() {
 ///         // Print the current time elapsed.
 ///         Ok(timer) => {
 ///             print!("\r{:02}.{:03}", timer.as_secs(), timer.as_millis() % 1000);
@@ -235,8 +235,8 @@ impl<T> Stream for RingReceiver<T> {
 ///                 print!(" - Activate main engine hydrogen burnoff system");
 ///             }
 ///         }
-///
-///         Err(RecvError::Disconnected) => break,
+///         Err(TryRecvError::Disconnected) => break,
+///         Err(TryRecvError::Empty) => thread::yield_now(),
 ///     }
 /// }
 ///
