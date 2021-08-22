@@ -58,8 +58,9 @@ impl<T> RingBuffer<T> {
 mod tests {
     use super::*;
     use crate::{RingReceiver, RingSender};
+    use alloc::{rc::Rc, string::String, sync::Arc};
+    use core::{cmp::max, mem::discriminant, num::NonZeroUsize, ptr::NonNull};
     use proptest::{collection::vec, prelude::*};
-    use std::{cmp::max, mem::discriminant, num::NonZeroUsize, ptr::NonNull, rc::Rc, sync::Arc};
 
     #[test]
     fn queue() {

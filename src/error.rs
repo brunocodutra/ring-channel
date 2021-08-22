@@ -1,5 +1,5 @@
+use core::fmt;
 use derivative::Derivative;
-use std::{error, fmt};
 
 #[cfg(test)]
 use proptest_derive::Arbitrary;
@@ -22,11 +22,16 @@ impl<T> fmt::Display for SendError<T> {
     }
 }
 
-impl<T: Send> error::Error for SendError<T> {}
+/// Requires [feature] `"std"`.
+///
+/// [feature]: index.html#optional-features
+#[cfg(feature = "std")]
+impl<T: Send> std::error::Error for SendError<T> {}
 
 /// An error that may be returned by [`RingReceiver::recv`].
 ///
 /// [`RingReceiver::recv`]: struct.RingReceiver.html#method.recv
+#[cfg(feature = "futures_api")]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub enum RecvError {
@@ -34,6 +39,7 @@ pub enum RecvError {
     Disconnected,
 }
 
+#[cfg(feature = "futures_api")]
 impl fmt::Display for RecvError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use RecvError::*;
@@ -43,7 +49,11 @@ impl fmt::Display for RecvError {
     }
 }
 
-impl error::Error for RecvError {}
+/// Requires [feature] `"std"`.
+///
+/// [feature]: index.html#optional-features
+#[cfg(all(feature = "std", feature = "futures_api"))]
+impl std::error::Error for RecvError {}
 
 /// An error that may be returned by [`RingReceiver::try_recv`].
 ///
@@ -68,27 +78,34 @@ impl fmt::Display for TryRecvError {
     }
 }
 
-impl error::Error for TryRecvError {}
+/// Requires [feature] `"std"`.
+///
+/// [feature]: index.html#optional-features
+#[cfg(feature = "std")]
+impl std::error::Error for TryRecvError {}
 
-#[cfg(test)]
+#[cfg(all(feature = "std", test))]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
     use proptest::prelude::*;
+    use std::error::Error;
 
     proptest! {
         #[test]
         fn send_error_implements_error_trait(err: SendError<()>) {
             assert_eq!(
                 format!("{}", err),
-                format!("{}", Box::<dyn error::Error>::from(err))
+                format!("{}", Box::<dyn Error>::from(err))
             );
         }
 
+        #[cfg(feature = "futures_api")]
         #[test]
         fn recv_error_implements_error_trait(err: RecvError) {
             assert_eq!(
                 format!("{}", err),
-                format!("{}", Box::<dyn error::Error>::from(err))
+                format!("{}", Box::<dyn Error>::from(err))
             );
         }
 
@@ -96,7 +113,7 @@ mod tests {
         fn try_recv_error_implements_error_trait(err: TryRecvError) {
             assert_eq!(
                 format!("{}", err),
-                format!("{}", Box::<dyn error::Error>::from(err))
+                format!("{}", Box::<dyn Error>::from(err))
             );
         }
     }

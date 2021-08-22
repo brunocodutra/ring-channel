@@ -33,7 +33,7 @@
 //! tx.send("Hello, world!").unwrap();
 //!
 //! // Receive the message through the outbound endpoint.
-//! # #[cfg(feature = "futures_api")]
+//! # #[cfg(all(feature = "std", feature = "futures_api"))]
 //! assert_eq!(rx.recv(), Ok("Hello, world!"));
 //! ```
 //!
@@ -54,7 +54,7 @@
 //! tx.send("Hello, universe!").unwrap();
 //!
 //! // Receive the message through the outbound endpoint.
-//! # #[cfg(feature = "futures_api")]
+//! # #[cfg(all(feature = "std", feature = "futures_api"))]
 //! assert_eq!(rx.recv(), Ok("Hello, universe!"));
 //! ```
 //!
@@ -67,7 +67,7 @@
 //! The channel lives as long as there is an endpoint associated with it.
 //!
 //! ```rust
-//! # #[cfg(feature = "futures_api")] {
+//! # #[cfg(all(feature = "std", feature = "futures_api"))] {
 //! use ring_channel::*;
 //! use std::{num::NonZeroUsize, thread};
 //!
@@ -137,7 +137,8 @@
 //! ```rust
 //! # #[cfg(feature = "futures_api")] {
 //! use ring_channel::*;
-//! use futures::{executor::*, prelude::*, stream};
+//! use futures::{prelude::*, stream};
+//! use smol::block_on;
 //! use std::{num::NonZeroUsize, thread};
 //!
 //! // Open the channel.
@@ -151,11 +152,31 @@
 //! });
 //!
 //! // Receive the stream of characters through the outbound endpoint.
-//! assert_eq!(&block_on_stream(rx).collect::<String>(), "Hello, world!");
+//! assert_eq!(&block_on(rx.collect::<String>()), "Hello, world!");
 //! # }
 //! ```
 //!
+//! # Optional Features
+//!
+//! * `std` (enabled by default)
+//!
+//!     Controls whether [crate `std`] is linked.
+//!
+//! * `futures_api` (enabled by default)
+//!
+//!     Enables integration with [futures-rs](https://crates.io/crates/futures),
+//!     see [§ Futures API](index.html#futures-api).
+//!
+//! [crate `std`]: https://doc.rust-lang.org/std/
 //! [futures-rs]: https://crates.io/crates/futures
+
+#![no_std]
+
+extern crate alloc;
+
+#[cfg(any(feature = "std", test))]
+#[cfg_attr(test, macro_use)]
+extern crate std;
 
 mod buffer;
 mod channel;

@@ -1,8 +1,8 @@
+use core::{mem::take, sync::atomic::*, task::Waker};
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
 use smallvec::SmallVec;
 use spinning_top::Spinlock;
-use std::{mem::take, sync::atomic::*, task::Waker};
 
 pub(super) trait Wake {
     fn wake(self);
