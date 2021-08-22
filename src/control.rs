@@ -1,14 +1,15 @@
 use crate::buffer::*;
+use alloc::boxed::Box;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::{ops::Deref, ptr::NonNull};
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::{ops::Deref, ptr::NonNull};
 
 #[cfg(feature = "futures_api")]
 use crate::waitlist::*;
 
 #[cfg(feature = "futures_api")]
-use std::task::Waker;
+use core::task::Waker;
 
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""))]

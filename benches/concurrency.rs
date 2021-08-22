@@ -1,7 +1,7 @@
+use core::num::NonZeroUsize;
 use criterion::*;
 use rayon::iter::{repeatn, ParallelIterator};
 use ring_channel::ring_channel;
-use std::num::NonZeroUsize;
 
 fn concurrency(c: &mut Criterion) {
     const CARDINALITY: usize = 10000;

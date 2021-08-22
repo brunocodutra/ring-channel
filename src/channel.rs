@@ -1,13 +1,13 @@
 use crate::{control::*, error::*};
+use core::sync::atomic::*;
+use core::{mem::ManuallyDrop, num::NonZeroUsize};
 use derivative::Derivative;
-use std::sync::atomic::*;
-use std::{mem::ManuallyDrop, num::NonZeroUsize};
 
 #[cfg(feature = "futures_api")]
-use futures::{executor::*, sink::Sink, stream::*, task::*};
+use futures::{sink::Sink, stream::*, task::*};
 
 #[cfg(feature = "futures_api")]
-use std::pin::Pin;
+use core::pin::Pin;
 
 /// The sending end of a [`ring_channel`].
 #[derive(Derivative, Eq, PartialEq)]
@@ -75,6 +75,9 @@ impl<T> Drop for RingSender<T> {
     }
 }
 
+/// Requires [feature] `"futures_api"`
+///
+/// [feature]: index.html#optional-features
 #[cfg(feature = "futures_api")]
 impl<T> Sink<T> for RingSender<T> {
     type Error = SendError<T>;
@@ -111,16 +114,18 @@ impl<T> RingReceiver<T> {
         Self { handle }
     }
 
-    /// Receives a message through the channel.
+    /// Receives a message through the channel (requires [features] `"futures_api"` and `"std"`).
     ///
     /// * If the internal ring buffer isn't empty, the oldest pending message is returned.
     /// * If the internal ring buffer is empty, the call blocks until a message is sent
     /// or the channel disconnects.
     /// * If the channel is disconnected and the internal ring buffer is empty,
     /// [`RecvError::Disconnected`] is returned.
-    #[cfg(feature = "futures_api")]
+    ///
+    /// [features]: index.html#optional-features
+    #[cfg(all(feature = "std", feature = "futures_api"))]
     pub fn recv(&mut self) -> Result<T, RecvError> {
-        block_on(self.next()).ok_or(RecvError::Disconnected)
+        futures::executor::block_on(self.next()).ok_or(RecvError::Disconnected)
     }
 
     /// Receives a message through the channel without blocking.
@@ -159,6 +164,9 @@ impl<T> Drop for RingReceiver<T> {
     }
 }
 
+/// Requires [feature] `"futures_api"`.
+///
+/// [feature]: index.html#optional-features
 #[cfg(feature = "futures_api")]
 impl<T> Stream for RingReceiver<T> {
     type Item = T;
@@ -200,8 +208,7 @@ impl<T> Stream for RingReceiver<T> {
 ///
 /// ```rust,no_run
 /// use ring_channel::*;
-/// use std::num::NonZeroUsize;
-/// use std::thread;
+/// use std::{num::NonZeroUsize, thread};
 /// use std::time::{Duration, Instant};
 ///
 /// // Open a channel to transmit the time elapsed since the beginning of the countdown.
@@ -250,9 +257,13 @@ pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
+    use core::{cmp::min, iter};
     use proptest::{collection::*, prelude::*};
     use rayon::{iter::repeatn, prelude::*};
-    use std::{cmp::min, iter};
+
+    #[cfg(feature = "futures_api")]
+    use smol::block_on;
 
     #[cfg(feature = "futures_api")]
     use futures::{prelude::*, stream};
@@ -375,7 +386,7 @@ mod tests {
             );
         }
 
-        #[cfg(feature = "futures_api")]
+        #[cfg(all(feature = "std", feature = "futures_api"))]
         #[test]
         fn recv_succeeds_on_non_empty_connected_channel(msgs in vec("[a-z]", 1..=100)) {
             let (s, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
@@ -393,7 +404,7 @@ mod tests {
             assert_eq!(received.drain(..).map(|(_, v)| v).collect::<Vec<_>>(), msgs);
         }
 
-        #[cfg(feature = "futures_api")]
+        #[cfg(all(feature = "std", feature = "futures_api"))]
         #[test]
         fn recv_succeeds_on_non_empty_disconnected_channel(msgs in vec("[a-z]", 1..=100)) {
             let (_, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
@@ -411,7 +422,7 @@ mod tests {
             assert_eq!(received.drain(..).map(|(_, v)| v).collect::<Vec<_>>(), msgs);
         }
 
-        #[cfg(feature = "futures_api")]
+        #[cfg(all(feature = "std", feature = "futures_api"))]
         #[test]
         fn recv_fails_on_empty_disconnected_channel(cap in 1..=100usize, n in 1..=100usize) {
             let (_, r) = ring_channel::<()>(NonZeroUsize::new(cap).unwrap());
@@ -501,7 +512,7 @@ mod tests {
             drop(tx); // hang-up
 
             assert_eq!(
-                block_on_stream(rx).collect::<Vec<_>>(),
+                block_on(rx.collect::<Vec<_>>()),
                 msgs.drain(..).skip(overwritten).collect::<Vec<_>>()
             );
         }
@@ -513,7 +524,7 @@ mod tests {
             rayon::scope(move |s| {
                 for _ in 0..n {
                     let rx = rx.clone();
-                    s.spawn(move |_| assert_eq!(block_on_stream(rx).collect::<Vec<_>>(), vec![]));
+                    s.spawn(move |_| assert_eq!(block_on(rx.collect::<Vec<_>>()), vec![]));
                 }
 
                 s.spawn(move |_| drop(tx));
@@ -560,6 +571,7 @@ mod tests {
             });
         }
 
+        #[cfg(feature = "std")]
         #[test]
         fn recv_wakes_on_disconnect(n in 1..=100usize) {
             let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
@@ -574,6 +586,7 @@ mod tests {
             });
         }
 
+        #[cfg(feature = "std")]
         #[test]
         fn recv_wakes_on_send(n in 1..=100usize) {
             let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
@@ -595,6 +608,7 @@ mod tests {
             });
         }
 
+        #[cfg(feature = "std")]
         #[test]
         fn recv_wakes_on_send_all(n in 1..=100usize) {
             let (mut tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
