@@ -58,9 +58,10 @@ impl<T> RingBuffer<T> {
 mod tests {
     use super::*;
     use crate::{RingReceiver, RingSender};
-    use alloc::{rc::Rc, string::String, sync::Arc};
+    use alloc::{rc::Rc, string::String, sync::Arc, vec::Vec};
     use core::{cmp::max, mem::discriminant, num::NonZeroUsize, ptr::NonNull};
-    use proptest::{collection::vec, prelude::*};
+    use proptest::collection::size_range;
+    use test_strategy::proptest;
 
     #[test]
     fn queue() {
@@ -133,28 +134,29 @@ mod tests {
         );
     }
 
-    proptest! {
-        #[test]
-        fn capacity(capacity in 1..=100usize) {
-            let buffer = RingBuffer::<()>::new(capacity);
-            assert_eq!(buffer.capacity(), capacity);
+    #[proptest]
+    fn capacity(#[strategy(1..=100usize)] capacity: usize) {
+        let buffer = RingBuffer::<()>::new(capacity);
+        assert_eq!(buffer.capacity(), capacity);
+    }
+
+    #[proptest]
+    fn overflow(
+        #[any(size_range(1..=100).lift())] entries: Vec<usize>,
+        #[strategy(1..=100usize)] capacity: usize,
+    ) {
+        let buffer = RingBuffer::new(capacity);
+
+        for &entry in &entries {
+            buffer.push(NonZeroUsize::new(entry).unwrap());
         }
 
-        #[test]
-        fn overflow(entries in vec(any::<usize>(), 1..=100), capacity in 1..=100usize) {
-            let buffer = RingBuffer::new(capacity);
+        for &entry in entries.iter().skip(max(entries.len(), capacity) - capacity) {
+            assert_eq!(buffer.pop(), Some(NonZeroUsize::new(entry).unwrap()));
+        }
 
-            for &entry in &entries {
-                buffer.push(NonZeroUsize::new(entry).unwrap());
-            }
-
-            for &entry in entries.iter().skip(max(entries.len(), capacity) - capacity) {
-                assert_eq!(buffer.pop(), Some(NonZeroUsize::new(entry).unwrap()));
-            }
-
-            for _ in entries.len()..max(entries.len(), capacity) {
-                assert_eq!(buffer.pop(), None);
-            }
+        for _ in entries.len()..max(entries.len(), capacity) {
+            assert_eq!(buffer.pop(), None);
         }
     }
 }
