@@ -2,7 +2,7 @@ use core::fmt;
 use derivative::Derivative;
 
 #[cfg(test)]
-use proptest_derive::Arbitrary;
+use test_strategy::Arbitrary;
 
 /// An error that may be returned by [`RingSender::send`].
 ///
@@ -88,33 +88,31 @@ impl std::error::Error for TryRecvError {}
 mod tests {
     use super::*;
     use alloc::boxed::Box;
-    use proptest::prelude::*;
     use std::error::Error;
+    use test_strategy::proptest;
 
-    proptest! {
-        #[test]
-        fn send_error_implements_error_trait(err: SendError<()>) {
-            assert_eq!(
-                format!("{}", err),
-                format!("{}", Box::<dyn Error>::from(err))
-            );
-        }
+    #[proptest]
+    fn send_error_implements_error_trait(err: SendError<()>) {
+        assert_eq!(
+            format!("{}", err),
+            format!("{}", Box::<dyn Error>::from(err))
+        );
+    }
 
-        #[cfg(feature = "futures_api")]
-        #[test]
-        fn recv_error_implements_error_trait(err: RecvError) {
-            assert_eq!(
-                format!("{}", err),
-                format!("{}", Box::<dyn Error>::from(err))
-            );
-        }
+    #[cfg(feature = "futures_api")]
+    #[proptest]
+    fn recv_error_implements_error_trait(err: RecvError) {
+        assert_eq!(
+            format!("{}", err),
+            format!("{}", Box::<dyn Error>::from(err))
+        );
+    }
 
-        #[test]
-        fn try_recv_error_implements_error_trait(err: TryRecvError) {
-            assert_eq!(
-                format!("{}", err),
-                format!("{}", Box::<dyn Error>::from(err))
-            );
-        }
+    #[proptest]
+    fn try_recv_error_implements_error_trait(err: TryRecvError) {
+        assert_eq!(
+            format!("{}", err),
+            format!("{}", Box::<dyn Error>::from(err))
+        );
     }
 }

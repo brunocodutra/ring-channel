@@ -53,8 +53,8 @@ impl<W: Wake> Waitlist<W> {
 mod tests {
     use super::*;
     use mockall::*;
-    use proptest::prelude::*;
     use rayon::scope;
+    use test_strategy::proptest;
 
     mock! {
         Waker {}
@@ -71,78 +71,85 @@ mod tests {
         assert_eq!(waitlist.wakers.lock().len(), 0);
     }
 
-    proptest! {
-        #[test]
-        fn wait_stores_wakers(m in 1..=100usize) {
-            let waitlist = Waitlist::new();
+    #[proptest]
+    fn wait_stores_wakers(#[strategy(1..=100usize)] m: usize) {
+        let waitlist = Waitlist::new();
 
-            for i in 0..m {
-                let mut waker = MockWaker::new();
-                waker.expect_will_wake().times(m - i - 1).return_const(false);
-                waitlist.wait(waker);
-            }
-
-            assert!(!waitlist.empty.load(Ordering::Relaxed));
-            assert_eq!(waitlist.wakers.lock().len(), m);
-        }
-
-        #[test]
-        fn wait_ignores_redundant_wakers(m in 1..=100usize) {
-            let waitlist = Waitlist::new();
-
+        for i in 0..m {
             let mut waker = MockWaker::new();
-            waker.expect_will_wake().times(m).return_const(true);
+            waker
+                .expect_will_wake()
+                .times(m - i - 1)
+                .return_const(false);
             waitlist.wait(waker);
-
-            assert!(!waitlist.empty.load(Ordering::Relaxed));
-            assert_eq!(waitlist.wakers.lock().len(), 1);
-
-            for _ in 0..m {
-                let mut waker = MockWaker::new();
-                waker.expect_will_wake().never().return_const(false);
-                waitlist.wait(waker);
-            }
-
-            assert!(!waitlist.empty.load(Ordering::Relaxed));
-            assert_eq!(waitlist.wakers.lock().len(), 1);
         }
 
-        #[test]
-        fn wakers_are_woken_exactly_once(m in 1..=100usize, n in 1..=100usize) {
-            let waitlist = Waitlist::new();
+        assert!(!waitlist.empty.load(Ordering::Relaxed));
+        assert_eq!(waitlist.wakers.lock().len(), m);
+    }
 
+    #[proptest]
+    fn wait_ignores_redundant_wakers(#[strategy(1..=100usize)] m: usize) {
+        let waitlist = Waitlist::new();
+
+        let mut waker = MockWaker::new();
+        waker.expect_will_wake().times(m).return_const(true);
+        waitlist.wait(waker);
+
+        assert!(!waitlist.empty.load(Ordering::Relaxed));
+        assert_eq!(waitlist.wakers.lock().len(), 1);
+
+        for _ in 0..m {
+            let mut waker = MockWaker::new();
+            waker.expect_will_wake().never().return_const(false);
+            waitlist.wait(waker);
+        }
+
+        assert!(!waitlist.empty.load(Ordering::Relaxed));
+        assert_eq!(waitlist.wakers.lock().len(), 1);
+    }
+
+    #[proptest]
+    fn wakers_are_woken_exactly_once(
+        #[strategy(1..=100usize)] m: usize,
+        #[strategy(1..=100usize)] n: usize,
+    ) {
+        let waitlist = Waitlist::new();
+
+        for _ in 0..m {
+            let mut waker = MockWaker::new();
+            waker.expect_will_wake().return_const(false);
+            waker.expect_wake().once().return_const(());
+            waitlist.wait(waker);
+        }
+
+        for _ in 0..n {
+            waitlist.wake();
+        }
+    }
+
+    #[proptest]
+    fn waitlist_is_thread_safe(
+        #[strategy(1..=100usize)] m: usize,
+        #[strategy(1..=100usize)] n: usize,
+    ) {
+        let waitlist = Waitlist::new();
+
+        scope(|s| {
             for _ in 0..m {
-                let mut waker = MockWaker::new();
-                waker.expect_will_wake().return_const(false);
-                waker.expect_wake().once().return_const(());
-                waitlist.wait(waker);
+                s.spawn(|_| {
+                    let mut waker = MockWaker::new();
+                    waker.expect_will_wake().return_const(false);
+                    waker.expect_wake().times(0..=1).return_const(());
+                    waitlist.wait(waker);
+                });
             }
 
             for _ in 0..n {
-                waitlist.wake();
+                s.spawn(|_| {
+                    waitlist.wake();
+                });
             }
-        }
-
-        #[test]
-        fn waitlist_is_thread_safe(m in 1..=100usize, n in 1..=100usize) {
-            let waitlist = Waitlist::new();
-
-            scope(|s| {
-                for _ in 0..m {
-                    s.spawn(|_| {
-                        let mut waker = MockWaker::new();
-                        waker.expect_will_wake().return_const(false);
-                        waker.expect_wake().times(0..=1).return_const(());
-                        waitlist.wait(waker);
-                    });
-                }
-
-                for _ in 0..n {
-                    s.spawn(|_| {
-                        waitlist.wake();
-                    });
-                }
-            });
-        }
+        });
     }
 }

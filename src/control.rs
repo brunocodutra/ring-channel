@@ -73,7 +73,7 @@ impl<T> Drop for ControlBlockRef<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
+    use test_strategy::proptest;
 
     #[test]
     fn control_block_starts_connected() {
@@ -88,11 +88,9 @@ mod tests {
         assert_eq!(ctrl.receivers.load(Ordering::Relaxed), 1);
     }
 
-    proptest! {
-        #[test]
-        fn control_block_allocates_buffer_given_capacity(cap in 1..=100usize) {
-            let ctrl = ControlBlock::<()>::new(cap);
-            assert_eq!(ctrl.buffer.capacity(), cap);
-        }
+    #[proptest]
+    fn control_block_allocates_buffer_given_capacity(#[strategy(1..=100usize)] capacity: usize) {
+        let ctrl = ControlBlock::<()>::new(capacity);
+        assert_eq!(ctrl.buffer.capacity(), capacity);
     }
 }
