@@ -4,7 +4,7 @@ Bounded MPMC channel abstraction on top of a ring buffer.
 
 ## Using RingChannel
 
-RingChannel is available on [crates.io][crate.home], simply add it as a dependency in your `Cargo.toml`:
+RingChannel is available on [crates.io], simply add it as a dependency in your `Cargo.toml`:
 
 ```
 [dependencies]
@@ -22,6 +22,8 @@ guidelines.
 ## License
 
 RingChannel is distributed under the terms of the MIT license, see [LICENSE] for details.
+
+[crates.io]:        https://crates.io/crates/ring-channel
 
 [docs.home]:        https://docs.rs/ring-channel
 [docs.badge]:       https://docs.rs/ring-channel/badge.svg
