@@ -4,16 +4,15 @@ name = "ring-channel-fuzz"
 version = "0.0.0"
 authors = ["Automatically generated"]
 publish = false
-edition = "2018"
+edition = "2021"
 
 [package.metadata]
 cargo-fuzz = true
 
 [dependencies]
-futures = "0.3.12"
-lazy_static = "1.4.0"
-libfuzzer-sys = "0.4.0"
-smol = "1.2.5"
+futures = "0.3"
+libfuzzer-sys = "0.4"
+smol = "1.2"
 
 [dependencies.ring-channel]
 path = ".."
