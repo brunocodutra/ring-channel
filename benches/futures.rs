@@ -1,12 +1,13 @@
 use criterion::*;
-use futures::{future::join_all, prelude::*, sink::drain, stream::iter};
-use rayon::current_num_threads;
+use futures::{future::join, prelude::*, sink::drain, stream::iter};
 use ring_channel::ring_channel;
 use smol::{block_on, spawn};
 use std::{env::set_var, num::NonZeroUsize};
 
+const THREADS: usize = 16;
+
 fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
-    set_var("SMOL_THREADS", current_num_threads().to_string());
+    set_var("SMOL_THREADS", THREADS.to_string());
 
     let mut group = c.benchmark_group(name);
 
@@ -19,25 +20,21 @@ fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
                     (vec![tx; m], vec![rx; n])
                 },
                 |(txs, rxs)| {
-                    let txs = txs
-                        .into_iter()
-                        .enumerate()
-                        .map(|(a, tx)| {
-                            iter(a * msgs / m + 1..=(a + 1) * msgs / m)
-                                .map(NonZeroUsize::new)
-                                .map(Option::unwrap)
-                                .map(Ok)
-                                .forward(tx)
-                                .unwrap_or_else(|_| ())
-                        })
-                        .map(spawn);
-
-                    let rxs = rxs
-                        .into_iter()
-                        .map(|rx| rx.map(Ok).forward(drain()).unwrap_or_else(|_| ()))
-                        .map(spawn);
-
-                    block_on(join_all(txs.chain(rxs)));
+                    block_on(join(
+                        iter(rxs).for_each_concurrent(None, |rx| {
+                            spawn(rx.map(Ok).forward(drain()).map(Result::unwrap))
+                        }),
+                        iter(txs).enumerate().for_each_concurrent(None, |(a, tx)| {
+                            spawn(
+                                iter(a * msgs / m + 1..=(a + 1) * msgs / m)
+                                    .map(NonZeroUsize::new)
+                                    .map(Option::unwrap)
+                                    .map(Ok)
+                                    .forward(tx)
+                                    .map(Result::unwrap),
+                            )
+                        }),
+                    ));
                 },
                 BatchSize::SmallInput,
             );
@@ -46,15 +43,15 @@ fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
 }
 
 fn mpmc(c: &mut Criterion) {
-    bench(c, "futures/mpmc", 32, 32, 1000);
+    bench(c, "futures/mpmc", THREADS / 2, THREADS / 2, 1000);
 }
 
 fn mpsc(c: &mut Criterion) {
-    bench(c, "futures/mpsc", 63, 1, 1000);
+    bench(c, "futures/mpsc", THREADS - 1, 1, 1000);
 }
 
 fn spmc(c: &mut Criterion) {
-    bench(c, "futures/spmc", 1, 63, 1000);
+    bench(c, "futures/spmc", 1, THREADS - 1, 1000);
 }
 
 fn spsc(c: &mut Criterion) {
