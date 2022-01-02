@@ -31,7 +31,7 @@ impl<T> RingSender<T> {
     ///     * If the internal ring buffer is full, the oldest pending message is overwritten.
     /// * If the channel is disconnected, [`SendError::Disconnected`] is returned.
     pub fn send(&mut self, message: T) -> Result<(), SendError<T>> {
-        if self.handle.receivers.load(Ordering::Relaxed) > 0 {
+        if self.handle.receivers.load(Ordering::Acquire) > 0 {
             self.handle.buffer.push(message);
 
             // A full memory barrier is necessary to prevent waitlist loads
@@ -137,13 +137,15 @@ impl<T> RingReceiver<T> {
     /// * If the channel is disconnected and the internal ring buffer is empty,
     /// [`TryRecvError::Disconnected`] is returned.
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
-        self.handle.buffer.pop().ok_or_else(|| {
-            if self.handle.senders.load(Ordering::Relaxed) > 0 {
-                TryRecvError::Empty
-            } else {
-                TryRecvError::Disconnected
-            }
-        })
+        // We must check whether the channel is connected using acquire ordering before we look at
+        // the buffer, in order to ensure that the loads associated with popping from the buffer
+        // happen after the stores associated with a push into the buffer that may have happened
+        // immediately before the channel was disconnected.
+        if self.handle.senders.load(Ordering::Acquire) > 0 {
+            self.handle.buffer.pop().ok_or(TryRecvError::Empty)
+        } else {
+            self.handle.buffer.pop().ok_or(TryRecvError::Disconnected)
+        }
     }
 }
 
