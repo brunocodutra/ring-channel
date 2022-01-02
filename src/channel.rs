@@ -4,7 +4,7 @@ use core::{mem::ManuallyDrop, num::NonZeroUsize};
 use derivative::Derivative;
 
 #[cfg(feature = "futures_api")]
-use futures::{sink::Sink, stream::*, task::*};
+use futures::{task::*, Sink, Stream};
 
 #[cfg(feature = "futures_api")]
 use core::pin::Pin;
@@ -127,7 +127,7 @@ impl<T> RingReceiver<T> {
     /// [features]: index.html#optional-features
     #[cfg(all(feature = "std", feature = "futures_api"))]
     pub fn recv(&mut self) -> Result<T, RecvError> {
-        futures::executor::block_on(self.next()).ok_or(RecvError::Disconnected)
+        futures::executor::block_on(futures::StreamExt::next(self)).ok_or(RecvError::Disconnected)
     }
 
     /// Receives a message through the channel without blocking.
@@ -261,19 +261,20 @@ mod tests {
     use super::*;
     use alloc::{string::String, vec::Vec};
     use core::{cmp::min, iter};
-    use rayon::{iter::repeatn, prelude::*};
+    use futures::stream::{iter, repeat, StreamExt};
+    use smol::{block_on, unblock};
     use test_strategy::proptest;
 
     #[cfg(feature = "futures_api")]
-    use smol::block_on;
+    use futures::{future::join, sink::SinkExt};
 
     #[cfg(feature = "futures_api")]
-    use futures::{prelude::*, stream};
+    use smol::spawn;
 
     #[test]
     fn ring_channel_is_associated_with_a_single_control_block() {
-        let (s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        assert_eq!(s.handle, r.handle);
+        let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(tx.handle, rx.handle);
     }
 
     #[test]
@@ -298,76 +299,60 @@ mod tests {
 
     #[test]
     fn cloning_sender_increments_senders() {
-        let (s, _r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (tx, _rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         #[allow(clippy::redundant_clone)]
-        let x = s.clone();
+        let x = tx.clone();
         assert_eq!(x.handle.senders.load(Ordering::Relaxed), 2);
         assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn cloning_receiver_increments_receivers_counter() {
-        let (_s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
         #[allow(clippy::redundant_clone)]
-        let x = r.clone();
+        let x = rx.clone();
         assert_eq!(x.handle.senders.load(Ordering::Relaxed), 1);
         assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 2);
     }
 
     #[test]
     fn dropping_sender_decrements_senders_counter() {
-        let (_, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        assert_eq!(r.handle.senders.load(Ordering::Relaxed), 0);
-        assert_eq!(r.handle.receivers.load(Ordering::Relaxed), 1);
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(rx.handle.senders.load(Ordering::Relaxed), 0);
+        assert_eq!(rx.handle.receivers.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn dropping_receiver_decrements_receivers_counter() {
-        let (s, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        assert_eq!(s.handle.senders.load(Ordering::Relaxed), 1);
-        assert_eq!(s.handle.receivers.load(Ordering::Relaxed), 0);
+        let (tx, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(tx.handle.senders.load(Ordering::Relaxed), 1);
+        assert_eq!(tx.handle.receivers.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn channel_is_disconnected_if_there_are_no_senders() {
-        let (_, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        assert_eq!(r.handle.senders.load(Ordering::Relaxed), 0);
-        assert!(!r.handle.connected.load(Ordering::Relaxed));
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(rx.handle.senders.load(Ordering::Relaxed), 0);
+        assert!(!rx.handle.connected.load(Ordering::Relaxed));
     }
 
     #[test]
     fn channel_is_disconnected_if_there_are_no_receivers() {
-        let (s, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        assert_eq!(s.handle.receivers.load(Ordering::Relaxed), 0);
-        assert!(!s.handle.connected.load(Ordering::Relaxed));
+        let (tx, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        assert_eq!(tx.handle.receivers.load(Ordering::Relaxed), 0);
+        assert!(!tx.handle.connected.load(Ordering::Relaxed));
     }
 
-    #[derive(Clone)]
-    enum Endpoint<T> {
-        Sender(RingSender<T>),
-        Receiver(RingReceiver<T>),
+    #[test]
+    fn endpoints_are_safe_to_send_across_threads() {
+        fn must_be_send(_: impl Send) {}
+        must_be_send(ring_channel::<()>(NonZeroUsize::new(1).unwrap()));
     }
 
-    #[proptest]
-    fn endpoints_are_safe_to_send_across_threads(
-        #[strategy(1..=100usize)] m: usize,
-        #[strategy(1..=100usize)] n: usize,
-    ) {
-        let (s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let ls = repeatn(s, m).map(Endpoint::Sender);
-        let rs = repeatn(r, n).map(Endpoint::Receiver);
-        ls.chain(rs).for_each(drop);
-    }
-
-    #[proptest]
-    fn endpoints_are_safe_to_share_across_threads(
-        #[strategy(1..=100usize)] m: usize,
-        #[strategy(1..=100usize)] n: usize,
-    ) {
-        let (s, r) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let ls = repeatn(&s, m).cloned().map(Endpoint::Sender);
-        let rs = repeatn(&r, n).cloned().map(Endpoint::Receiver);
-        ls.chain(rs).for_each(drop);
+    #[test]
+    fn endpoints_are_safe_to_share_across_threads() {
+        fn must_be_sync(_: impl Sync) {}
+        must_be_sync(ring_channel::<()>(NonZeroUsize::new(1).unwrap()));
     }
 
     #[proptest]
@@ -375,12 +360,11 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (s, _r) = ring_channel(NonZeroUsize::new(capacity).unwrap());
-        repeatn(s, msgs.len())
-            .zip(msgs.par_iter().cloned())
-            .for_each(|(mut c, msg)| {
-                assert_eq!(c.send(msg), Ok(()));
-            });
+        let (tx, _rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
+        block_on(iter(msgs).for_each_concurrent(None, |msg| {
+            let mut tx = tx.clone();
+            unblock(move || assert_eq!(tx.send(msg), Ok(())))
+        }));
     }
 
     #[proptest]
@@ -388,12 +372,11 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (s, _) = ring_channel(NonZeroUsize::new(capacity).unwrap());
-        repeatn(s, msgs.len())
-            .zip(msgs.par_iter().cloned())
-            .for_each(|(mut c, msg)| {
-                assert_eq!(c.send(msg.clone()), Err(SendError::Disconnected(msg)));
-            });
+        let (tx, _) = ring_channel(NonZeroUsize::new(capacity).unwrap());
+        block_on(iter(msgs).for_each_concurrent(None, |msg| {
+            let mut tx = tx.clone();
+            unblock(move || assert_eq!(tx.send(msg.clone()), Err(SendError::Disconnected(msg))))
+        }));
     }
 
     #[proptest]
@@ -401,17 +384,82 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (mut s, r) = ring_channel(NonZeroUsize::new(capacity).unwrap());
+        let (tx, rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
         let overwritten = msgs.len() - min(msgs.len(), capacity);
 
-        for msg in msgs.iter().cloned() {
-            assert_eq!(s.send(msg), Ok(()));
-        }
+        block_on(iter(msgs.clone()).for_each(|msg| {
+            let mut tx = tx.clone();
+            unblock(move || assert_eq!(tx.send(msg), Ok(())))
+        }));
 
         assert_eq!(
-            iter::from_fn(|| r.handle.buffer.pop()).collect::<Vec<_>>(),
+            iter::from_fn(|| rx.handle.buffer.pop()).collect::<Vec<_>>(),
             msgs.into_iter().skip(overwritten).collect::<Vec<_>>()
         );
+    }
+
+    #[proptest]
+    fn try_recv_succeeds_on_non_empty_connected_channel(
+        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+    ) {
+        let (tx, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+
+        for msg in msgs.iter().cloned().enumerate() {
+            tx.handle.buffer.push(msg);
+        }
+
+        let mut received = block_on(
+            repeat(rx)
+                .take(msgs.len())
+                .then(|mut rx| unblock(move || rx.try_recv().unwrap()))
+                .collect::<Vec<_>>(),
+        );
+
+        received.sort_by_key(|(k, _)| *k);
+        assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
+    }
+
+    #[proptest]
+    fn try_recv_succeeds_on_non_empty_disconnected_channel(
+        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+    ) {
+        let (_, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+
+        for msg in msgs.iter().cloned().enumerate() {
+            rx.handle.buffer.push(msg);
+        }
+
+        let mut received = block_on(
+            repeat(rx)
+                .take(msgs.len())
+                .then(|mut rx| unblock(move || rx.try_recv().unwrap()))
+                .collect::<Vec<_>>(),
+        );
+
+        received.sort_by_key(|(k, _)| *k);
+        assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
+    }
+
+    #[proptest]
+    fn try_recv_fails_on_empty_connected_channel(
+        #[strategy(1..=100usize)] capacity: usize,
+        #[strategy(1..=100usize)] n: usize,
+    ) {
+        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
+        block_on(repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
+            unblock(move || assert_eq!(rx.try_recv(), Err(TryRecvError::Empty)))
+        }));
+    }
+
+    #[proptest]
+    fn try_recv_fails_on_empty_disconnected_channel(
+        #[strategy(1..=100usize)] capacity: usize,
+        #[strategy(1..=100usize)] n: usize,
+    ) {
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
+        block_on(repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
+            unblock(move || assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected)))
+        }));
     }
 
     #[cfg(all(feature = "std", feature = "futures_api"))]
@@ -419,24 +467,21 @@ mod tests {
     fn recv_succeeds_on_non_empty_connected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (s, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+        let (tx, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
 
         for msg in msgs.iter().cloned().enumerate() {
-            s.handle.buffer.push(msg);
+            tx.handle.buffer.push(msg);
         }
 
-        let mut received = vec![(0usize, Default::default()); msgs.len()];
-        repeatn(r, msgs.len())
-            .zip(received.par_iter_mut())
-            .for_each(|(mut c, slot)| {
-                *slot = c.recv().unwrap();
-            });
+        let mut received = block_on(
+            repeat(rx)
+                .take(msgs.len())
+                .then(|mut rx| unblock(move || rx.recv().unwrap()))
+                .collect::<Vec<_>>(),
+        );
 
         received.sort_by_key(|(k, _)| *k);
-        assert_eq!(
-            received.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
-            msgs
-        );
+        assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
     }
 
     #[cfg(all(feature = "std", feature = "futures_api"))]
@@ -444,24 +489,21 @@ mod tests {
     fn recv_succeeds_on_non_empty_disconnected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (_, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+        let (_, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
 
         for msg in msgs.iter().cloned().enumerate() {
-            r.handle.buffer.push(msg);
+            rx.handle.buffer.push(msg);
         }
 
-        let mut received = vec![(0usize, Default::default()); msgs.len()];
-        repeatn(r, msgs.len())
-            .zip(received.par_iter_mut())
-            .for_each(|(mut c, slot)| {
-                *slot = c.recv().unwrap();
-            });
+        let mut received = block_on(
+            repeat(rx)
+                .take(msgs.len())
+                .then(|mut rx| unblock(move || rx.recv().unwrap()))
+                .collect::<Vec<_>>(),
+        );
 
         received.sort_by_key(|(k, _)| *k);
-        assert_eq!(
-            received.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
-            msgs
-        );
+        assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
     }
 
     #[cfg(all(feature = "std", feature = "futures_api"))]
@@ -470,81 +512,42 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[strategy(1..=100usize)] n: usize,
     ) {
-        let (_, r) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
-        repeatn(r, n).for_each(|mut r| {
-            assert_eq!(r.recv(), Err(RecvError::Disconnected));
-        });
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
+        block_on(repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
+            unblock(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
+        }));
     }
 
+    #[cfg(all(feature = "std", feature = "futures_api"))]
     #[proptest]
-    fn try_recv_succeeds_on_non_empty_connected_channel(
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
-    ) {
-        let (s, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+    fn recv_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
+        let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
 
-        for msg in msgs.iter().cloned().enumerate() {
-            s.handle.buffer.push(msg);
-        }
-
-        let mut received = vec![(0usize, Default::default()); msgs.len()];
-        repeatn(r, msgs.len())
-            .zip(received.par_iter_mut())
-            .for_each(|(mut c, slot)| {
-                *slot = c.try_recv().unwrap();
-            });
-
-        received.sort_by_key(|(k, _)| *k);
-        assert_eq!(
-            received.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
-            msgs
-        );
+        block_on(join(
+            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
+                unblock(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
+            }),
+            repeat(tx)
+                .take(n)
+                .for_each_concurrent(None, |tx| unblock(move || drop(tx))),
+        ));
     }
 
+    #[cfg(all(feature = "std", feature = "futures_api"))]
     #[proptest]
-    fn try_recv_succeeds_on_non_empty_disconnected_channel(
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
-    ) {
-        let (_, r) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+    fn recv_wakes_on_send(#[strategy(1..=100usize)] n: usize) {
+        let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
 
-        for msg in msgs.iter().cloned().enumerate() {
-            r.handle.buffer.push(msg);
-        }
+        let _prevent_disconnection = tx.clone();
 
-        let mut received = vec![(0usize, Default::default()); msgs.len()];
-
-        repeatn(r, msgs.len())
-            .zip(received.par_iter_mut())
-            .for_each(|(mut c, slot)| {
-                *slot = c.try_recv().unwrap();
-            });
-
-        received.sort_by_key(|(k, _)| *k);
-        assert_eq!(
-            received.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
-            msgs
-        );
-    }
-
-    #[proptest]
-    fn try_recv_fails_on_empty_connected_channel(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[strategy(1..=100usize)] n: usize,
-    ) {
-        let (_s, r) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
-        repeatn(r, n).for_each(|mut r| {
-            assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
-        });
-    }
-
-    #[proptest]
-    fn try_recv_fails_on_empty_disconnected_channel(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[strategy(1..=100usize)] n: usize,
-    ) {
-        let (_, r) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
-        repeatn(r, n).for_each(|mut r| {
-            assert_eq!(r.try_recv(), Err(TryRecvError::Disconnected));
-        });
+        block_on(join(
+            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
+                unblock(move || assert_eq!(rx.recv(), Ok(())))
+            }),
+            repeat(tx).take(n).for_each_concurrent(None, |mut tx| {
+                unblock(move || assert_eq!(tx.send(()), Ok(())))
+            }),
+        ));
     }
 
     #[cfg(feature = "futures_api")]
@@ -556,16 +559,13 @@ mod tests {
         let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
         let overwritten = msgs.len() - min(msgs.len(), capacity);
 
-        assert_eq!(
-            block_on(tx.send_all(&mut iter(msgs.clone()).map(Ok))),
-            Ok(())
-        );
+        assert_eq!(block_on(iter(&msgs).map(Ok).forward(&mut tx)), Ok(()));
 
         drop(tx); // hang-up
 
         assert_eq!(
             iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>(),
-            msgs.into_iter().skip(overwritten).collect::<Vec<_>>()
+            msgs.iter().skip(overwritten).collect::<Vec<_>>()
         );
     }
 
@@ -575,12 +575,13 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (mut tx, rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
+        let (tx, rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
         let overwritten = msgs.len() - min(msgs.len(), capacity);
 
-        for msg in msgs.iter().cloned() {
-            assert_eq!(tx.send(msg), Ok(()));
-        }
+        block_on(iter(msgs.clone()).for_each(|msg| {
+            let mut tx = tx.clone();
+            unblock(move || assert_eq!(tx.send(msg), Ok(())))
+        }));
 
         drop(tx); // hang-up
 
@@ -595,112 +596,30 @@ mod tests {
     fn stream_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
         let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
 
-        rayon::scope(|s| {
-            for _ in 0..n {
-                let rx = rx.clone();
-                s.spawn(|_| assert_eq!(block_on(rx.collect::<Vec<_>>()), vec![]));
-            }
-
-            s.spawn(|_| drop(tx));
-        });
-    }
-
-    #[cfg(feature = "futures_api")]
-    #[proptest]
-    fn stream_wakes_on_send(#[strategy(1..=100usize)] n: usize) {
-        let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
-
-        rayon::scope(|s| {
-            for _ in 0..n {
-                let tx = tx.clone();
-                let mut rx = rx.clone();
-                s.spawn(move |_| {
-                    assert_eq!(block_on(rx.next()), Some(42));
-                    drop(tx); // Avoids waking on disconnect
-                });
-            }
-
-            for _ in 0..n {
-                let mut tx = tx.clone();
-                s.spawn(move |_| assert_eq!(tx.send(42), Ok(())));
-            }
-        });
+        block_on(join(
+            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
+                spawn(async move { assert_eq!(rx.next().await, None) })
+            }),
+            repeat(tx).take(n).for_each_concurrent(None, |mut tx| {
+                spawn(async move { assert_eq!(tx.close().await, Ok(())) })
+            }),
+        ));
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn stream_wakes_on_send_all(#[strategy(1..=100usize)] n: usize) {
-        let (mut tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
-
-        rayon::scope(|s| {
-            for _ in 0..n {
-                let tx = tx.clone();
-                let mut rx = rx.clone();
-                s.spawn(move |_| {
-                    assert_eq!(block_on(rx.next()), Some(42));
-                    drop(tx); // Avoids waking on disconnect
-                });
-            }
-
-            let mut msgs = stream::iter(vec![Ok(42); n]);
-            s.spawn(move |_| assert_eq!(block_on(tx.send_all(&mut msgs)), Ok(())));
-        });
-    }
-
-    #[cfg(all(feature = "futures_api", feature = "std"))]
-    #[proptest]
-    fn recv_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
-        let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-
-        rayon::scope(|s| {
-            for _ in 0..n {
-                let mut rx = rx.clone();
-                s.spawn(move |_| assert_eq!(rx.recv(), Err(RecvError::Disconnected)));
-            }
-
-            s.spawn(|_| drop(tx));
-        });
-    }
-
-    #[cfg(all(feature = "futures_api", feature = "std"))]
-    #[proptest]
-    fn recv_wakes_on_send(#[strategy(1..=100usize)] n: usize) {
         let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
 
-        rayon::scope(|s| {
-            for _ in 0..n {
-                let tx = tx.clone();
-                let mut rx = rx.clone();
-                s.spawn(move |_| {
-                    assert_eq!(rx.recv(), Ok(42));
-                    drop(tx); // Avoids waking on disconnect
-                });
-            }
+        let _prevent_disconnection = tx.clone();
 
-            for _ in 0..n {
-                let mut tx = tx.clone();
-                s.spawn(move |_| assert_eq!(tx.send(42), Ok(())));
-            }
-        });
-    }
-
-    #[cfg(all(feature = "futures_api", feature = "std"))]
-    #[proptest]
-    fn recv_wakes_on_send_all(#[strategy(1..=100usize)] n: usize) {
-        let (mut tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
-
-        rayon::scope(|s| {
-            for _ in 0..n {
-                let tx = tx.clone();
-                let mut rx = rx.clone();
-                s.spawn(move |_| {
-                    assert_eq!(rx.recv(), Ok(42));
-                    drop(tx); // Avoids waking on disconnect
-                });
-            }
-
-            let mut msgs = stream::iter(vec![Ok(42); n]);
-            s.spawn(move |_| assert_eq!(block_on(tx.send_all(&mut msgs)), Ok(())));
-        });
+        block_on(join(
+            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
+                spawn(async move { assert_eq!(rx.next().await, Some(())) })
+            }),
+            repeat(tx).take(n).for_each_concurrent(None, |mut tx| {
+                spawn(async move { assert_eq!(tx.send_all(&mut iter(Some(Ok(())))).await, Ok(())) })
+            }),
+        ));
     }
 }

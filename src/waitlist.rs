@@ -52,8 +52,11 @@ impl<W: Wake> Waitlist<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::sync::Arc;
+    use futures::future::join;
+    use futures::stream::{repeat, StreamExt};
     use mockall::*;
-    use rayon::scope;
+    use smol::{block_on, unblock};
     use test_strategy::proptest;
 
     mock! {
@@ -133,23 +136,22 @@ mod tests {
         #[strategy(1..=100usize)] m: usize,
         #[strategy(1..=100usize)] n: usize,
     ) {
-        let waitlist = Waitlist::new();
+        let waitlist = Arc::new(Waitlist::new());
 
-        scope(|s| {
-            for _ in 0..m {
-                s.spawn(|_| {
-                    let mut waker = MockWaker::new();
-                    waker.expect_will_wake().return_const(false);
-                    waker.expect_wake().times(0..=1).return_const(());
-                    waitlist.wait(waker);
-                });
-            }
-
-            for _ in 0..n {
-                s.spawn(|_| {
-                    waitlist.wake();
-                });
-            }
-        });
+        block_on(join(
+            repeat(waitlist.clone())
+                .take(m)
+                .for_each_concurrent(None, |w| {
+                    unblock(move || {
+                        let mut waker = MockWaker::new();
+                        waker.expect_will_wake().return_const(false);
+                        waker.expect_wake().times(0..=1).return_const(());
+                        w.wait(waker);
+                    })
+                }),
+            repeat(waitlist)
+                .take(n)
+                .for_each_concurrent(None, |w| unblock(move || w.wake())),
+        ));
     }
 }

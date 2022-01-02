@@ -1,9 +1,14 @@
 use criterion::*;
-use rayon::scope;
+use futures::{future::join, prelude::*, stream::iter};
 use ring_channel::{ring_channel, TryRecvError};
-use std::{num::NonZeroUsize, thread};
+use smol::{block_on, unblock};
+use std::{env::set_var, num::NonZeroUsize, thread};
+
+const THREADS: usize = 16;
 
 fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
+    set_var("SMOL_THREADS", THREADS.to_string());
+
     let mut group = c.benchmark_group(name);
 
     for &cap in &[1, msgs] {
@@ -15,26 +20,27 @@ fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
                     (vec![tx; m], vec![rx; n])
                 },
                 |(txs, rxs)| {
-                    scope(move |s| {
-                        rxs.into_iter().for_each(|mut rx| {
-                            s.spawn(move |_| loop {
+                    block_on(join(
+                        iter(rxs).for_each_concurrent(None, |mut rx| {
+                            unblock(move || loop {
                                 match rx.try_recv() {
                                     Ok(_) => continue,
                                     Err(TryRecvError::Disconnected) => break,
                                     Err(TryRecvError::Empty) => thread::yield_now(),
                                 }
-                            });
-                        });
-
-                        txs.into_iter().enumerate().for_each(|(a, mut tx)| {
-                            s.spawn(move |_| {
-                                (a * msgs / m + 1..=(a + 1) * msgs / m)
-                                    .map(NonZeroUsize::new)
-                                    .map(Option::unwrap)
-                                    .for_each(|msg| tx.send(msg).unwrap());
-                            });
-                        });
-                    })
+                            })
+                        }),
+                        iter(txs)
+                            .enumerate()
+                            .for_each_concurrent(None, |(a, mut tx)| {
+                                unblock(move || {
+                                    (a * msgs / m + 1..=(a + 1) * msgs / m)
+                                        .map(NonZeroUsize::new)
+                                        .map(Option::unwrap)
+                                        .for_each(|msg| tx.send(msg).unwrap());
+                                })
+                            }),
+                    ));
                 },
                 BatchSize::SmallInput,
             );
@@ -43,15 +49,15 @@ fn bench(c: &mut Criterion, name: &str, m: usize, n: usize, msgs: usize) {
 }
 
 fn mpmc(c: &mut Criterion) {
-    bench(c, "throughput/mpmc", 32, 32, 1000);
+    bench(c, "throughput/mpmc", THREADS / 2, THREADS / 2, 1000);
 }
 
 fn mpsc(c: &mut Criterion) {
-    bench(c, "throughput/mpsc", 63, 1, 1000);
+    bench(c, "throughput/mpsc", THREADS - 1, 1, 1000);
 }
 
 fn spmc(c: &mut Criterion) {
-    bench(c, "throughput/spmc", 1, 63, 1000);
+    bench(c, "throughput/spmc", 1, THREADS - 1, 1000);
 }
 
 fn spsc(c: &mut Criterion) {
