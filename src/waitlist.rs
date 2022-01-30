@@ -1,134 +1,99 @@
-use core::{mem::take, sync::atomic::*, task::Waker};
+use core::sync::atomic::*;
+use crossbeam_queue::SegQueue;
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
-use smallvec::SmallVec;
-use spin::Mutex;
 
-pub(super) trait Wake {
-    fn wake(self);
-    fn will_wake(&self, other: &Self) -> bool;
+#[derive(Derivative, Debug)]
+#[derivative(Default(bound = "", new = "true"))]
+pub(super) struct Waitlist<T> {
+    len: CachePadded<AtomicUsize>,
+    queue: SegQueue<T>,
 }
 
-impl Wake for Waker {
-    fn wake(self) {
-        self.wake()
+impl<T> Waitlist<T> {
+    pub(super) fn push(&self, item: T) {
+        self.queue.push(item);
+        self.len.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn will_wake(&self, other: &Self) -> bool {
-        self.will_wake(other)
-    }
-}
-
-#[derive(Derivative)]
-#[derivative(Debug, Default(bound = "", new = "true"))]
-pub(super) struct Waitlist<W> {
-    #[derivative(Default(value = "AtomicBool::new(true)"))]
-    empty: AtomicBool,
-    wakers: CachePadded<Mutex<SmallVec<[W; 6]>>>,
-}
-
-impl<W: Wake> Waitlist<W> {
-    pub(super) fn wait(&self, waker: W) {
-        let mut wakers = self.wakers.lock();
-        if !wakers.iter().any(|w| w.will_wake(&waker)) {
-            wakers.push(waker);
-            drop(wakers); // release the lock
-            self.empty.store(false, Ordering::Release);
-        }
-    }
-
-    pub(super) fn wake(&self) {
-        if !self.empty.swap(true, Ordering::Acquire) {
-            // Drain all wakers in case any has become stale.
-            let wakers = take(&mut *self.wakers.lock());
-            // Important: do not inline `wakers` to ensure the lock is dropped.
-            for waker in wakers {
-                waker.wake();
-            }
+    // The queue is cleared, even if the iterator is not fully consumed.
+    pub(super) fn drain(&self) -> impl Iterator<Item = T> + '_ {
+        Drain {
+            registry: self,
+            count: self.len.swap(0, Ordering::AcqRel),
         }
     }
 }
+
+struct Drain<'a, T> {
+    registry: &'a Waitlist<T>,
+    count: usize,
+}
+
+impl<'a, T> Iterator for Drain<'a, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count > 0 {
+            self.count -= 1;
+            self.registry.queue.pop()
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.count, self.count.into())
+    }
+}
+
+impl<'a, T> ExactSizeIterator for Drain<'a, T> {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::sync::Arc;
+    use alloc::{sync::Arc, vec::Vec};
+    use core::sync::atomic::Ordering;
     use futures::future::join;
     use futures::stream::{repeat, StreamExt};
-    use mockall::*;
+    use proptest::collection::size_range;
     use smol::{block_on, unblock};
     use test_strategy::proptest;
 
-    mock! {
-        Waker {}
-        impl Wake for Waker {
-            fn wake(self);
-            fn will_wake(&self, other: &MockWaker) -> bool;
-        }
-    }
-
     #[test]
     fn waitlist_starts_empty() {
-        let waitlist = Waitlist::<MockWaker>::new();
-        assert!(waitlist.empty.load(Ordering::Relaxed));
-        assert_eq!(waitlist.wakers.lock().len(), 0);
+        let waitlist = Waitlist::<()>::new();
+        assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
+        assert_eq!(waitlist.queue.len(), 0);
     }
 
     #[proptest]
-    fn wait_stores_wakers(#[strategy(1..=100usize)] m: usize) {
-        let waitlist = Waitlist::new();
-
-        for i in 0..m {
-            let mut waker = MockWaker::new();
-            waker
-                .expect_will_wake()
-                .times(m - i - 1)
-                .return_const(false);
-            waitlist.wait(waker);
-        }
-
-        assert!(!waitlist.empty.load(Ordering::Relaxed));
-        assert_eq!(waitlist.wakers.lock().len(), m);
-    }
-
-    #[proptest]
-    fn wait_ignores_redundant_wakers(#[strategy(1..=100usize)] m: usize) {
-        let waitlist = Waitlist::new();
-
-        let mut waker = MockWaker::new();
-        waker.expect_will_wake().times(m).return_const(true);
-        waitlist.wait(waker);
-
-        assert!(!waitlist.empty.load(Ordering::Relaxed));
-        assert_eq!(waitlist.wakers.lock().len(), 1);
-
-        for _ in 0..m {
-            let mut waker = MockWaker::new();
-            waker.expect_will_wake().never().return_const(false);
-            waitlist.wait(waker);
-        }
-
-        assert!(!waitlist.empty.load(Ordering::Relaxed));
-        assert_eq!(waitlist.wakers.lock().len(), 1);
-    }
-
-    #[proptest]
-    fn wakers_are_woken_exactly_once(
-        #[strategy(1..=100usize)] m: usize,
-        #[strategy(1..=100usize)] n: usize,
+    fn push_inserts_item_at_the_back_of_the_queue(
+        #[any(size_range(1..=100).lift())] items: Vec<char>,
     ) {
         let waitlist = Waitlist::new();
 
-        for _ in 0..m {
-            let mut waker = MockWaker::new();
-            waker.expect_will_wake().return_const(false);
-            waker.expect_wake().once().return_const(());
-            waitlist.wait(waker);
+        for &item in &items {
+            waitlist.push(item);
         }
 
-        for _ in 0..n {
-            waitlist.wake();
+        assert_eq!(waitlist.len.load(Ordering::Relaxed), items.len());
+        assert_eq!(waitlist.queue.len(), items.len());
+    }
+
+    #[proptest]
+    fn drain_removes_items_from_the_queue_in_fifo_order(
+        #[any(size_range(1..=100).lift())] items: Vec<char>,
+    ) {
+        let waitlist = Waitlist::new();
+
+        for &item in &items {
+            waitlist.push(item);
         }
+
+        assert_eq!(waitlist.drain().collect::<Vec<_>>(), items);
+        assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
+        assert_eq!(waitlist.queue.len(), 0);
     }
 
     #[proptest]
@@ -140,18 +105,12 @@ mod tests {
 
         block_on(join(
             repeat(waitlist.clone())
+                .enumerate()
                 .take(m)
-                .for_each_concurrent(None, |w| {
-                    unblock(move || {
-                        let mut waker = MockWaker::new();
-                        waker.expect_will_wake().return_const(false);
-                        waker.expect_wake().times(0..=1).return_const(());
-                        w.wait(waker);
-                    })
-                }),
+                .for_each_concurrent(None, |(item, w)| unblock(move || w.push(item))),
             repeat(waitlist)
                 .take(n)
-                .for_each_concurrent(None, |w| unblock(move || w.wake())),
+                .for_each_concurrent(None, |w| unblock(move || w.drain().for_each(drop))),
         ));
     }
 }

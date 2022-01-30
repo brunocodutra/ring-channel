@@ -1,6 +1,5 @@
-use crate::{control::*, error::*};
-use core::sync::atomic::*;
-use core::{mem::ManuallyDrop, num::NonZeroUsize};
+use crate::{control::ControlBlockRef, error::*};
+use core::{mem::ManuallyDrop, num::NonZeroUsize, sync::atomic::*};
 use derivative::Derivative;
 
 #[cfg(feature = "futures_api")]
@@ -34,13 +33,14 @@ impl<T> RingSender<T> {
         if self.handle.receivers.load(Ordering::Acquire) > 0 {
             self.handle.buffer.push(message);
 
-            // A full memory barrier is necessary to prevent waitlist loads
-            // from being reordered before storing the message.
+            // A full memory barrier is necessary to ensure storing the message
+            // happens before waking receivers.
             #[cfg(feature = "futures_api")]
             fence(Ordering::SeqCst);
 
+            // Drain all items in case any has become stale.
             #[cfg(feature = "futures_api")]
-            self.handle.waitlist.wake();
+            self.handle.waitlist.drain().for_each(Waker::wake);
 
             Ok(())
         } else {
@@ -60,13 +60,14 @@ impl<T> Drop for RingSender<T> {
     fn drop(&mut self) {
         // Synchronizes with other senders.
         if self.handle.senders.fetch_sub(1, Ordering::AcqRel) == 1 {
-            // A full memory barrier is necessary to prevent waitlist loads
-            // from being reordered before updating senders.
+            // A full memory barrier is necessary to ensure updating senders
+            // happens before waking receivers.
             #[cfg(feature = "futures_api")]
             fence(Ordering::SeqCst);
 
+            // Drain all items in case any has become stale.
             #[cfg(feature = "futures_api")]
-            self.handle.waitlist.wake();
+            self.handle.waitlist.drain().for_each(Waker::wake);
 
             // Synchronizes the last sender and receiver with each other.
             if !self.handle.connected.swap(false, Ordering::AcqRel) {
@@ -177,19 +178,21 @@ impl<T> Stream for RingReceiver<T> {
 
     fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.try_recv() {
-            Ok(msg) => Poll::Ready(Some(msg)),
-            Err(TryRecvError::Disconnected) => Poll::Ready(None),
+            result @ Ok(_) | result @ Err(TryRecvError::Disconnected) => Poll::Ready(result.ok()),
             Err(TryRecvError::Empty) => {
-                self.handle.waitlist.wait(ctx.waker().clone());
+                self.handle.waitlist.push(ctx.waker().clone());
 
-                // A full memory barrier is necessary to prevent the following loads
-                // from being reordered before storing the waker.
+                // A full memory barrier is necessary to ensure registering the waker
+                // happens before attempting to retrieve a message from the buffer.
                 fence(Ordering::SeqCst);
 
                 // Look at the buffer again in case a new message has been sent in the meantime.
                 match self.try_recv() {
-                    Ok(msg) => Poll::Ready(Some(msg)),
-                    Err(TryRecvError::Disconnected) => Poll::Ready(None),
+                    result @ Ok(_) | result @ Err(TryRecvError::Disconnected) => {
+                        self.handle.waitlist.drain().for_each(Waker::wake);
+                        Poll::Ready(result.ok())
+                    }
+
                     Err(TryRecvError::Empty) => Poll::Pending,
                 }
             }

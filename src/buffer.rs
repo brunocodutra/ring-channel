@@ -142,17 +142,17 @@ mod tests {
 
     #[proptest]
     fn overflow(
-        #[any(size_range(1..=100).lift())] entries: Vec<usize>,
+        #[any(size_range(1..=100).lift())] entries: Vec<char>,
         #[strategy(1..=100usize)] capacity: usize,
     ) {
         let buffer = RingBuffer::new(capacity);
 
         for &entry in &entries {
-            buffer.push(NonZeroUsize::new(entry).unwrap());
+            buffer.push(entry);
         }
 
         for &entry in entries.iter().skip(max(entries.len(), capacity) - capacity) {
-            assert_eq!(buffer.pop(), Some(NonZeroUsize::new(entry).unwrap()));
+            assert_eq!(buffer.pop(), Some(entry));
         }
 
         for _ in entries.len()..max(entries.len(), capacity) {

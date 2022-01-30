@@ -16,8 +16,8 @@ all-features = true
 
 [features]
 default = ["std", "futures_api"]
-std = ["crossbeam-queue/std", "crossbeam-utils/std", "futures/executor", "futures/std", "spin/std"]
-futures_api = ["futures", "smallvec", "spin"]
+std = ["crossbeam-queue/std", "crossbeam-utils/std", "futures/executor", "futures/std"]
+futures_api = ["futures"]
 
 [badges]
 codecov = { repository = "brunocodutra/ring-channel" }
@@ -27,13 +27,10 @@ crossbeam-queue = { version = "0.3", default-features = false, features = ["allo
 crossbeam-utils = { version = "0.8", default-features = false }
 derivative = { version = "2.2", default-features = false, features = ["use_core"] }
 futures = { version = "0.3", default-features = false, optional = true }
-smallvec = { version = "1.6", default-features = false, optional = true }
-spin = { version = "0.9", default-features = false, optional = true, features = ["spin_mutex"] }
 
 [dev-dependencies]
 criterion = "0.3"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-mockall = "0.11"
 proptest = "1.0"
 smol = "1.2"
 test-strategy = "0.1"
