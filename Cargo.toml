@@ -7,8 +7,8 @@ description = "Bounded MPMC channel abstraction on top of a ring buffer"
 repository = "https://github.com/brunocodutra/ring-channel.git"
 license = "MIT"
 readme = "README.md"
-keywords = ["mpmc", "channel", "asynchronous", "ring"]
-categories = ["concurrency", "asynchronous"]
+keywords = ["channel", "lock-free", "mpmc", "ring-buffer", "fifo" ]
+categories = ["concurrency", "asynchronous", "no-std"]
 resolver = "2"
 
 [package.metadata.docs.rs]
