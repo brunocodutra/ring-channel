@@ -29,8 +29,10 @@ derivative = { version = "2.2", default-features = false, features = ["use_core"
 futures = { version = "0.3", default-features = false, optional = true }
 
 [dev-dependencies]
+async-trait = "0.1"
 criterion = "0.3"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
+num_cpus = "1.13"
 proptest = "1.0"
 smol = "1.2"
 test-strategy = "0.1"
@@ -38,11 +40,6 @@ test-strategy = "0.1"
 [[bench]]
 name = "throughput"
 harness = false
-
-[[bench]]
-name = "futures"
-harness = false
-required-features = ["futures_api"]
 
 [lib]
 bench = false
