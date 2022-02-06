@@ -12,8 +12,8 @@ pub(super) struct Waitlist<T> {
 
 impl<T> Waitlist<T> {
     pub(super) fn push(&self, item: T) {
-        self.queue.push(item);
         self.len.fetch_add(1, Ordering::AcqRel);
+        self.queue.push(item);
     }
 
     // The queue is cleared, even if the iterator is not fully consumed.
@@ -34,11 +34,15 @@ impl<'a, T> Iterator for Drain<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.count > 0 {
-            self.count -= 1;
-            self.registry.queue.pop()
-        } else {
-            None
+        if self.count == 0 {
+            return None;
+        }
+
+        loop {
+            if let item @ Some(_) = self.registry.queue.pop() {
+                self.count -= 1;
+                return item;
+            }
         }
     }
 

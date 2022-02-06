@@ -178,7 +178,7 @@ impl<T> Stream for RingReceiver<T> {
 
     fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.try_recv() {
-            result @ Ok(_) | result @ Err(TryRecvError::Disconnected) => Poll::Ready(result.ok()),
+            res @ Ok(_) | res @ Err(TryRecvError::Disconnected) => Poll::Ready(res.ok()),
             Err(TryRecvError::Empty) => {
                 self.handle.waitlist.push(ctx.waker().clone());
 
@@ -188,11 +188,7 @@ impl<T> Stream for RingReceiver<T> {
 
                 // Look at the buffer again in case a new message has been sent in the meantime.
                 match self.try_recv() {
-                    result @ Ok(_) | result @ Err(TryRecvError::Disconnected) => {
-                        self.handle.waitlist.drain().for_each(Waker::wake);
-                        Poll::Ready(result.ok())
-                    }
-
+                    res @ Ok(_) | res @ Err(TryRecvError::Disconnected) => Poll::Ready(res.ok()),
                     Err(TryRecvError::Empty) => Poll::Pending,
                 }
             }
