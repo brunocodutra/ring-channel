@@ -117,7 +117,7 @@ impl<T> RingReceiver<T> {
         Self { handle }
     }
 
-    /// Receives a message through the channel (requires [features] `"futures_api"` and `"std"`).
+    /// Receives a message through the channel (requires [feature] `"futures_api"`).
     ///
     /// * If the internal ring buffer isn't empty, the oldest pending message is returned.
     /// * If the internal ring buffer is empty, the call blocks until a message is sent
@@ -125,8 +125,8 @@ impl<T> RingReceiver<T> {
     /// * If the channel is disconnected and the internal ring buffer is empty,
     /// [`RecvError::Disconnected`] is returned.
     ///
-    /// [features]: index.html#optional-features
-    #[cfg(all(feature = "std", feature = "futures_api"))]
+    /// [feature]: index.html#optional-features
+    #[cfg(feature = "futures_api")]
     pub fn recv(&mut self) -> Result<T, RecvError> {
         futures::executor::block_on(futures::StreamExt::next(self)).ok_or(RecvError::Disconnected)
     }
@@ -463,7 +463,7 @@ mod tests {
         }));
     }
 
-    #[cfg(all(feature = "std", feature = "futures_api"))]
+    #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_succeeds_on_non_empty_connected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
     }
 
-    #[cfg(all(feature = "std", feature = "futures_api"))]
+    #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_succeeds_on_non_empty_disconnected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
     }
 
-    #[cfg(all(feature = "std", feature = "futures_api"))]
+    #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_fails_on_empty_disconnected_channel(
         #[strategy(1..=100usize)] capacity: usize,
@@ -519,7 +519,7 @@ mod tests {
         }));
     }
 
-    #[cfg(all(feature = "std", feature = "futures_api"))]
+    #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
         let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
@@ -534,7 +534,7 @@ mod tests {
         ));
     }
 
-    #[cfg(all(feature = "std", feature = "futures_api"))]
+    #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_wakes_on_send(#[strategy(1..=100usize)] n: usize) {
         let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
