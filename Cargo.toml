@@ -16,7 +16,7 @@ all-features = true
 
 [features]
 default = ["std", "futures_api"]
-std = ["crossbeam-queue/std", "crossbeam-utils/std", "futures/executor", "futures/std"]
+std = ["crossbeam-queue/std", "crossbeam-utils/std", "futures/std"]
 futures_api = ["futures"]
 
 [badges]
@@ -26,7 +26,7 @@ codecov = { repository = "brunocodutra/ring-channel" }
 crossbeam-queue = { version = "0.3", default-features = false, features = ["alloc"] }
 crossbeam-utils = { version = "0.8", default-features = false }
 derivative = { version = "2.2", default-features = false, features = ["use_core"] }
-futures = { version = "0.3", default-features = false, optional = true }
+futures = { version = "0.3", default-features = false, features = ["executor"], optional = true }
 
 [dev-dependencies]
 async-trait = "0.1"
