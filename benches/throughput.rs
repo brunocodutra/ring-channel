@@ -1,37 +1,57 @@
 use async_trait::async_trait;
-use criterion::*;
+use criterion::measurement::{Measurement, WallTime};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::{future::join, prelude::*, stream::repeat};
 use ring_channel::{ring_channel, RingReceiver, RingSender, TryRecvError};
-use smol::{block_on, unblock};
+use smol::{block_on, spawn, unblock};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{env::set_var, hint::spin_loop, iter, mem::size_of, num::NonZeroUsize};
 
 #[cfg(feature = "futures_api")]
-use smol::spawn;
+use futures::{stream::unfold, SinkExt};
 
-const MESSAGES_PER_CONSUMER: usize = 150;
+const MESSAGES: usize = 100;
 
 #[async_trait]
 trait Routine<T> {
-    async fn produce(tx: RingSender<T>);
-    async fn consume(rx: RingReceiver<T>);
+    async fn produce(tx: RingSender<T>, limit: usize) -> usize;
+    async fn consume(rx: RingReceiver<T>, limit: usize) -> usize;
 }
 
 fn bench<R: Routine<[char; N]>, const N: usize>(c: &mut Criterion, name: &str, m: usize, n: usize) {
     set_var("SMOL_THREADS", num_cpus::get().to_string());
 
     let mut group = c.benchmark_group(name);
-    group.throughput(Throughput::Elements((MESSAGES_PER_CONSUMER * n) as u64));
+    group.throughput(Throughput::Elements(MESSAGES as u64));
 
     for &cap in &[1, m + n] {
         group.bench_function(
             format!("{}B/{}x{}/{}", size_of::<[char; N]>(), m, n, cap),
             |b| {
-                b.iter(|| {
+                b.iter_custom(|iters| {
+                    let produced = AtomicUsize::new(0);
+                    let consumed = AtomicUsize::new(0);
+                    let checkpoint = WallTime.start();
+
                     let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
+
                     block_on(join(
-                        repeat(tx).take(m).for_each_concurrent(None, R::produce),
-                        repeat(rx).take(n).for_each_concurrent(None, R::consume),
+                        repeat(tx).take(m).for_each_concurrent(None, |tx| async {
+                            produced.fetch_add(
+                                spawn(R::produce(tx, iters as usize * MESSAGES / m)).await,
+                                Ordering::Relaxed,
+                            );
+                        }),
+                        repeat(rx).take(n).for_each_concurrent(None, |rx| async {
+                            consumed.fetch_add(
+                                spawn(R::consume(rx, iters as usize * MESSAGES / n)).await,
+                                Ordering::Relaxed,
+                            );
+                        }),
                     ));
+
+                    let elapsed = WallTime.end(checkpoint);
+                    elapsed.div_f64(consumed.into_inner() as f64 / produced.into_inner() as f64)
                 });
             },
         );
@@ -43,24 +63,30 @@ struct Async;
 
 #[cfg(feature = "futures_api")]
 #[async_trait]
-impl<T: 'static + Send + Default + Clone> Routine<T> for Async {
-    async fn produce(tx: RingSender<T>) {
-        spawn(repeat(Ok(T::default())).forward(tx)).await.ok();
+impl<T: 'static + Send + Default> Routine<T> for Async {
+    async fn produce(tx: RingSender<T>, limit: usize) -> usize {
+        let producer = unfold(tx, |mut tx| async move {
+            <_ as SinkExt<_>>::send(&mut tx, T::default()).await.ok()?;
+            Some(((), tx))
+        });
+
+        producer.take(limit).count().await
     }
 
-    async fn consume(rx: RingReceiver<T>) {
-        spawn(rx.take(MESSAGES_PER_CONSUMER).count()).await;
+    async fn consume(rx: RingReceiver<T>, limit: usize) -> usize {
+        rx.take(limit).count().await
     }
 }
 struct Block;
 
 #[async_trait]
 impl<T: 'static + Send + Default> Routine<T> for Block {
-    async fn produce(mut tx: RingSender<T>) {
-        unblock(move || while let Ok(()) = tx.send(T::default()) {}).await
+    async fn produce(mut tx: RingSender<T>, limit: usize) -> usize {
+        let producer = iter::from_fn(move || tx.send(T::default()).ok());
+        unblock(move || producer.take(limit).count()).await
     }
 
-    async fn consume(mut rx: RingReceiver<T>) {
+    async fn consume(mut rx: RingReceiver<T>, limit: usize) -> usize {
         let consumer = iter::from_fn(move || loop {
             match rx.try_recv() {
                 Ok(m) => return Some(m),
@@ -69,7 +95,7 @@ impl<T: 'static + Send + Default> Routine<T> for Block {
             }
         });
 
-        unblock(move || consumer.take(MESSAGES_PER_CONSUMER).count()).await;
+        unblock(move || consumer.take(limit).count()).await
     }
 }
 
