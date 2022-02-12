@@ -209,14 +209,15 @@ impl<T> Stream for RingReceiver<T> {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```no_run
+/// # fn doctest() -> Result<(), Box<dyn std::error::Error>> {
 /// use ring_channel::*;
 /// use std::{num::NonZeroUsize, thread};
 /// use std::time::{Duration, Instant};
 ///
 /// // Open a channel to transmit the time elapsed since the beginning of the countdown.
 /// // We only need a buffer of size 1, since we're only interested in the current value.
-/// let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(1).unwrap());
+/// let (mut tx, mut rx) = ring_channel(NonZeroUsize::try_from(1)?);
 ///
 /// thread::spawn(move || {
 ///     let countdown = Instant::now() + Duration::from_secs(10);
@@ -250,7 +251,9 @@ impl<T> Stream for RingReceiver<T> {
 ///     }
 /// }
 ///
-/// println!("\r00.0000 - Solid rocket booster ignition and liftoff!")
+/// println!("\r00.0000 - Solid rocket booster ignition and liftoff!");
+/// # Ok(())
+/// # }
 /// ```
 pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T>) {
     let handle = ManuallyDrop::new(ControlBlockRef::new(capacity.get()));
@@ -262,98 +265,100 @@ mod tests {
     use super::*;
     use alloc::{string::String, vec::Vec};
     use core::{cmp::min, iter};
-    use futures::stream::{iter, repeat, StreamExt};
-    use smol::{block_on, unblock};
+    use futures::prelude::*;
+    use futures::stream::{iter, repeat};
     use test_strategy::proptest;
+    use tokio::runtime;
+    use tokio::task::spawn_blocking;
 
     #[cfg(feature = "futures_api")]
-    use futures::{future::join, sink::SinkExt};
+    use futures::future::try_join;
 
     #[cfg(feature = "futures_api")]
-    use smol::spawn;
+    use tokio::task::spawn;
 
-    #[test]
+    #[proptest]
     fn ring_channel_is_associated_with_a_single_control_block() {
-        let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         assert_eq!(tx.handle, rx.handle);
     }
 
-    #[test]
+    #[proptest]
     fn senders_are_equal_if_they_are_associated_with_the_same_ring_channel() {
-        let (s1, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let (s2, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (s1, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (s2, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
         assert_eq!(s1, s1.clone());
         assert_eq!(s2, s2.clone());
         assert_ne!(s1, s2);
     }
 
-    #[test]
+    #[proptest]
     fn receivers_are_equal_if_they_are_associated_with_the_same_ring_channel() {
-        let (_, r1) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
-        let (_, r2) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (_, r1) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (_, r2) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
         assert_eq!(r1, r1.clone());
         assert_eq!(r2, r2.clone());
         assert_ne!(r1, r2);
     }
 
-    #[test]
+    #[proptest]
     fn cloning_sender_increments_senders() {
-        let (tx, _rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (tx, _rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
         let x = tx.clone();
         assert_eq!(x.handle.senders.load(Ordering::Relaxed), 2);
         assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 1);
     }
 
-    #[test]
+    #[proptest]
     fn cloning_receiver_increments_receivers_counter() {
-        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
         let x = rx.clone();
         assert_eq!(x.handle.senders.load(Ordering::Relaxed), 1);
         assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 2);
     }
 
-    #[test]
+    #[proptest]
     fn dropping_sender_decrements_senders_counter() {
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         assert_eq!(rx.handle.senders.load(Ordering::Relaxed), 0);
         assert_eq!(rx.handle.receivers.load(Ordering::Relaxed), 1);
     }
 
-    #[test]
+    #[proptest]
     fn dropping_receiver_decrements_receivers_counter() {
-        let (tx, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (tx, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         assert_eq!(tx.handle.senders.load(Ordering::Relaxed), 1);
         assert_eq!(tx.handle.receivers.load(Ordering::Relaxed), 0);
     }
 
-    #[test]
+    #[proptest]
     fn channel_is_disconnected_if_there_are_no_senders() {
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         assert_eq!(rx.handle.senders.load(Ordering::Relaxed), 0);
         assert!(!rx.handle.connected.load(Ordering::Relaxed));
     }
 
-    #[test]
+    #[proptest]
     fn channel_is_disconnected_if_there_are_no_receivers() {
-        let (tx, _) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let (tx, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         assert_eq!(tx.handle.receivers.load(Ordering::Relaxed), 0);
         assert!(!tx.handle.connected.load(Ordering::Relaxed));
     }
 
-    #[test]
+    #[proptest]
     fn endpoints_are_safe_to_send_across_threads() {
         fn must_be_send(_: impl Send) {}
-        must_be_send(ring_channel::<()>(NonZeroUsize::new(1).unwrap()));
+        must_be_send(ring_channel::<()>(NonZeroUsize::try_from(1)?));
     }
 
-    #[test]
+    #[proptest]
     fn endpoints_are_safe_to_share_across_threads() {
         fn must_be_sync(_: impl Sync) {}
-        must_be_sync(ring_channel::<()>(NonZeroUsize::new(1).unwrap()));
+        must_be_sync(ring_channel::<()>(NonZeroUsize::try_from(1)?));
     }
 
     #[proptest]
@@ -361,11 +366,13 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (tx, _rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
-        block_on(iter(msgs).for_each_concurrent(None, |msg| {
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, _rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
+
+        rt.block_on(iter(msgs).map(Ok).try_for_each_concurrent(None, |msg| {
             let mut tx = tx.clone();
-            unblock(move || assert_eq!(tx.send(msg), Ok(())))
-        }));
+            spawn_blocking(move || assert_eq!(tx.send(msg), Ok(())))
+        }))?;
     }
 
     #[proptest]
@@ -373,11 +380,15 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (tx, _) = ring_channel(NonZeroUsize::new(capacity).unwrap());
-        block_on(iter(msgs).for_each_concurrent(None, |msg| {
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, _) = ring_channel(NonZeroUsize::try_from(capacity)?);
+
+        rt.block_on(iter(msgs).map(Ok).try_for_each_concurrent(None, |msg| {
             let mut tx = tx.clone();
-            unblock(move || assert_eq!(tx.send(msg.clone()), Err(SendError::Disconnected(msg))))
-        }));
+            spawn_blocking(move || {
+                assert_eq!(tx.send(msg.clone()), Err(SendError::Disconnected(msg)))
+            })
+        }))?;
     }
 
     #[proptest]
@@ -385,13 +396,14 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (tx, rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
         let overwritten = msgs.len() - min(msgs.len(), capacity);
 
-        block_on(iter(msgs.clone()).for_each(|msg| {
+        rt.block_on(iter(msgs.clone()).map(Ok).try_for_each(|msg| {
             let mut tx = tx.clone();
-            unblock(move || assert_eq!(tx.send(msg), Ok(())))
-        }));
+            spawn_blocking(move || assert_eq!(tx.send(msg), Ok(())))
+        }))?;
 
         assert_eq!(
             iter::from_fn(|| rx.handle.buffer.pop()).collect::<Vec<_>>(),
@@ -403,18 +415,20 @@ mod tests {
     fn try_recv_succeeds_on_non_empty_connected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (tx, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
 
         for msg in msgs.iter().cloned().enumerate() {
             tx.handle.buffer.push(msg);
         }
 
-        let mut received = block_on(
+        let mut received = rt.block_on(
             repeat(rx)
                 .take(msgs.len())
-                .then(|mut rx| unblock(move || rx.try_recv().unwrap()))
-                .collect::<Vec<_>>(),
-        );
+                .map(Ok)
+                .and_then(|mut rx| spawn_blocking(move || rx.try_recv().unwrap()))
+                .try_collect::<Vec<_>>(),
+        )?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -424,18 +438,20 @@ mod tests {
     fn try_recv_succeeds_on_non_empty_disconnected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (_, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (_, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
 
         for msg in msgs.iter().cloned().enumerate() {
             rx.handle.buffer.push(msg);
         }
 
-        let mut received = block_on(
+        let mut received = rt.block_on(
             repeat(rx)
                 .take(msgs.len())
-                .then(|mut rx| unblock(move || rx.try_recv().unwrap()))
-                .collect::<Vec<_>>(),
-        );
+                .map(Ok)
+                .and_then(|mut rx| spawn_blocking(move || rx.try_recv().unwrap()))
+                .try_collect::<Vec<_>>(),
+        )?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -446,10 +462,17 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[strategy(1..=100usize)] n: usize,
     ) {
-        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
-        block_on(repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
-            unblock(move || assert_eq!(rx.try_recv(), Err(TryRecvError::Empty)))
-        }));
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
+
+        rt.block_on(
+            repeat(rx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut rx| {
+                    spawn_blocking(move || assert_eq!(rx.try_recv(), Err(TryRecvError::Empty)))
+                }),
+        )?;
     }
 
     #[proptest]
@@ -457,10 +480,19 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[strategy(1..=100usize)] n: usize,
     ) {
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
-        block_on(repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
-            unblock(move || assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected)))
-        }));
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
+
+        rt.block_on(
+            repeat(rx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut rx| {
+                    spawn_blocking(move || {
+                        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected))
+                    })
+                }),
+        )?;
     }
 
     #[cfg(feature = "futures_api")]
@@ -468,18 +500,20 @@ mod tests {
     fn recv_succeeds_on_non_empty_connected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (tx, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
 
         for msg in msgs.iter().cloned().enumerate() {
             tx.handle.buffer.push(msg);
         }
 
-        let mut received = block_on(
+        let mut received = rt.block_on(
             repeat(rx)
                 .take(msgs.len())
-                .then(|mut rx| unblock(move || rx.recv().unwrap()))
-                .collect::<Vec<_>>(),
-        );
+                .map(Ok)
+                .and_then(|mut rx| spawn_blocking(move || rx.recv().unwrap()))
+                .try_collect::<Vec<_>>(),
+        )?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -490,18 +524,20 @@ mod tests {
     fn recv_succeeds_on_non_empty_disconnected_channel(
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (_, rx) = ring_channel(NonZeroUsize::new(msgs.len()).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (_, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
 
         for msg in msgs.iter().cloned().enumerate() {
             rx.handle.buffer.push(msg);
         }
 
-        let mut received = block_on(
+        let mut received = rt.block_on(
             repeat(rx)
                 .take(msgs.len())
-                .then(|mut rx| unblock(move || rx.recv().unwrap()))
-                .collect::<Vec<_>>(),
-        );
+                .map(Ok)
+                .and_then(|mut rx| spawn_blocking(move || rx.recv().unwrap()))
+                .try_collect::<Vec<_>>(),
+        )?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -513,42 +549,60 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[strategy(1..=100usize)] n: usize,
     ) {
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::new(capacity).unwrap());
-        block_on(repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
-            unblock(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
-        }));
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
+
+        rt.block_on(
+            repeat(rx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut rx| {
+                    spawn_blocking(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
+                }),
+        )?;
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
-        let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
-        block_on(join(
-            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
-                unblock(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
-            }),
+        rt.block_on(try_join(
+            repeat(rx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut rx| {
+                    spawn_blocking(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
+                }),
             repeat(tx)
                 .take(n)
-                .for_each_concurrent(None, |tx| unblock(move || drop(tx))),
-        ));
+                .map(Ok)
+                .try_for_each_concurrent(None, |tx| spawn_blocking(move || drop(tx))),
+        ))?;
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_wakes_on_send(#[strategy(1..=100usize)] n: usize) {
-        let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
-
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel(NonZeroUsize::try_from(n)?);
         let _prevent_disconnection = tx.clone();
 
-        block_on(join(
-            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
-                unblock(move || assert_eq!(rx.recv(), Ok(())))
-            }),
-            repeat(tx).take(n).for_each_concurrent(None, |mut tx| {
-                unblock(move || assert_eq!(tx.send(()), Ok(())))
-            }),
-        ));
+        rt.block_on(try_join(
+            repeat(rx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut rx| {
+                    spawn_blocking(move || assert_eq!(rx.recv(), Ok(())))
+                }),
+            repeat(tx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut tx| {
+                    spawn_blocking(move || assert_eq!(tx.send(()), Ok(())))
+                }),
+        ))?;
     }
 
     #[cfg(feature = "futures_api")]
@@ -557,10 +611,11 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (mut tx, mut rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
         let overwritten = msgs.len() - min(msgs.len(), capacity);
 
-        assert_eq!(block_on(iter(&msgs).map(Ok).forward(&mut tx)), Ok(()));
+        assert_eq!(rt.block_on(iter(&msgs).map(Ok).forward(&mut tx)), Ok(()));
 
         drop(tx); // hang-up
 
@@ -576,18 +631,19 @@ mod tests {
         #[strategy(1..=100usize)] capacity: usize,
         #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let (tx, rx) = ring_channel(NonZeroUsize::new(capacity).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
         let overwritten = msgs.len() - min(msgs.len(), capacity);
 
-        block_on(iter(msgs.clone()).for_each(|msg| {
+        rt.block_on(iter(msgs.clone()).map(Ok).try_for_each(|msg| {
             let mut tx = tx.clone();
-            unblock(move || assert_eq!(tx.send(msg), Ok(())))
-        }));
+            spawn_blocking(move || assert_eq!(tx.send(msg), Ok(())))
+        }))?;
 
         drop(tx); // hang-up
 
         assert_eq!(
-            block_on(rx.collect::<Vec<_>>()),
+            rt.block_on(rx.collect::<Vec<_>>()),
             msgs.into_iter().skip(overwritten).collect::<Vec<_>>()
         );
     }
@@ -595,32 +651,45 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn stream_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
-        let (tx, rx) = ring_channel::<()>(NonZeroUsize::new(1).unwrap());
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
-        block_on(join(
-            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
-                spawn(async move { assert_eq!(rx.next().await, None) })
-            }),
-            repeat(tx).take(n).for_each_concurrent(None, |mut tx| {
-                spawn(async move { assert_eq!(tx.close().await, Ok(())) })
-            }),
-        ));
+        rt.block_on(try_join(
+            repeat(rx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut rx| {
+                    spawn(async move { assert_eq!(rx.next().await, None) })
+                }),
+            repeat(tx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut tx| {
+                    spawn(async move { assert_eq!(tx.close().await, Ok(())) })
+                }),
+        ))?;
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
-    fn stream_wakes_on_send_all(#[strategy(1..=100usize)] n: usize) {
-        let (tx, rx) = ring_channel(NonZeroUsize::new(n).unwrap());
-
+    fn stream_wakes_on_sink(#[strategy(1..=100usize)] n: usize) {
+        let rt = runtime::Builder::new_multi_thread().build()?;
+        let (tx, rx) = ring_channel(NonZeroUsize::try_from(n)?);
         let _prevent_disconnection = tx.clone();
 
-        block_on(join(
-            repeat(rx).take(n).for_each_concurrent(None, |mut rx| {
-                spawn(async move { assert_eq!(rx.next().await, Some(())) })
-            }),
-            repeat(tx).take(n).for_each_concurrent(None, |mut tx| {
-                spawn(async move { assert_eq!(tx.send_all(&mut iter(Some(Ok(())))).await, Ok(())) })
-            }),
-        ));
+        rt.block_on(try_join(
+            repeat(rx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |mut rx| {
+                    spawn(async move { assert_eq!(rx.next().await, Some(())) })
+                }),
+            repeat(tx)
+                .take(n)
+                .map(Ok)
+                .try_for_each_concurrent(None, |tx| {
+                    spawn(async move { assert_eq!(iter(Some(Ok(()))).forward(tx).await, Ok(())) })
+                }),
+        ))?;
     }
 }

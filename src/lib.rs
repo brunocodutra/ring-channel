@@ -67,7 +67,8 @@
 //! The channel lives as long as there is an endpoint associated with it.
 //!
 //! ```rust
-//! # #[cfg(all(feature = "std", feature = "futures_api"))] {
+//! # #[cfg(all(feature = "std", feature = "futures_api"))]
+//! # fn doctest() -> Result<(), Box<dyn std::error::Error>> {
 //! use ring_channel::*;
 //! use std::{num::NonZeroUsize, thread};
 //!
@@ -79,18 +80,21 @@
 //!
 //! // Spawn a thread that echoes any message it receives.
 //! thread::spawn(move || {
-//!     if let Ok(msg) = rx2.recv() {
-//!         tx2.send(msg).unwrap();
+//!     while let Ok(msg) = rx2.recv() {
+//!         if let Err(SendError::Disconnected(_)) = tx2.send(msg) {
+//!             break;
+//!         }
 //!     }
 //! });
 //!
-//! tx1.send("Hello, world!").unwrap();
+//! tx1.send("Hello, world!")?;
 //!
 //! if let Ok(msg) = rx1.recv() {
 //!     // Depending on which thread goes first,
 //!     // we might have received the direct message or the echo.
 //!     assert_eq!(msg, "Hello, world!");
 //! }
+//! # Ok(())
 //! # }
 //! ```
 //!
@@ -103,7 +107,7 @@
 //!
 //! ```rust
 //! use ring_channel::*;
-//! use std::{num::NonZeroUsize, thread};
+//! use std::num::NonZeroUsize;
 //!
 //! // Open the channel.
 //! let (mut tx1, mut rx) = ring_channel(NonZeroUsize::new(3).unwrap());
@@ -135,24 +139,24 @@
 //! The cargo feature `futures_api` can be disabled to opt out of the dependency on [futures-rs].
 //!
 //! ```rust
-//! # #[cfg(feature = "futures_api")] {
+//! # #[cfg(all(feature = "std", feature = "futures_api"))]
+//! # #[tokio::main]
+//! # async fn doctest() -> Result<(), Box<dyn std::error::Error>> {
 //! use ring_channel::*;
 //! use futures::{prelude::*, stream};
-//! use smol::block_on;
-//! use std::{num::NonZeroUsize, thread};
+//! use std::num::NonZeroUsize;
 //!
 //! // Open the channel.
-//! let (mut tx, mut rx) = ring_channel(NonZeroUsize::new(13).unwrap());
+//! let (tx, rx) = ring_channel(NonZeroUsize::try_from(13)?);
 //!
 //! let message = &['H', 'e', 'l', 'l', 'o', ',', ' ', 'w', 'o', 'r', 'l', 'd', '!'];
 //!
-//! thread::spawn(move || {
-//!     // Send the stream of characters through the Sink.
-//!     block_on(tx.send_all(&mut stream::iter(message).map(Ok))).unwrap();
-//! });
+//! // Send the stream of characters through the Sink.
+//! stream::iter(message).map(Ok).forward(tx).await?;
 //!
-//! // Receive the stream of characters through the outbound endpoint.
-//! assert_eq!(&block_on(rx.collect::<String>()), "Hello, world!");
+//! // Collect the Stream into a String.
+//! assert_eq!(&rx.collect::<String>().await, "Hello, world!");
+//! # Ok(())
 //! # }
 //! ```
 //!

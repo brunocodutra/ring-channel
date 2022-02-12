@@ -29,13 +29,12 @@ derivative = { version = "2.2.0", default-features = false, features = ["use_cor
 futures = { version = "0.3.21", default-features = false, features = ["executor"], optional = true }
 
 [dev-dependencies]
-async-trait = "0.1.52"
-criterion = "0.3.5"
+criterion = { version = "0.3.5", features = ["async_tokio"] }
 futures = { version = "0.3.21", default-features = false, features = ["alloc"] }
 num_cpus = "1.13.1"
 proptest = "1.0.0"
-smol = "1.2.5"
 test-strategy = "0.1.2"
+tokio = { version = "1.16.1", default-features = false, features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "throughput"

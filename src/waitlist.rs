@@ -58,13 +58,12 @@ mod tests {
     use super::*;
     use alloc::{sync::Arc, vec::Vec};
     use core::sync::atomic::Ordering;
-    use futures::future::join;
-    use futures::stream::{repeat, StreamExt};
+    use futures::{future::try_join, prelude::*, stream::repeat};
     use proptest::collection::size_range;
-    use smol::{block_on, unblock};
     use test_strategy::proptest;
+    use tokio::{runtime, task::spawn_blocking};
 
-    #[test]
+    #[proptest]
     fn waitlist_starts_empty() {
         let waitlist = Waitlist::<()>::new();
         assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
@@ -105,16 +104,21 @@ mod tests {
         #[strategy(1..=100usize)] m: usize,
         #[strategy(1..=100usize)] n: usize,
     ) {
+        let rt = runtime::Builder::new_multi_thread().build()?;
         let waitlist = Arc::new(Waitlist::new());
 
-        block_on(join(
+        rt.block_on(try_join(
             repeat(waitlist.clone())
                 .enumerate()
                 .take(m)
-                .for_each_concurrent(None, |(item, w)| unblock(move || w.push(item))),
+                .map(Ok)
+                .try_for_each_concurrent(None, |(item, w)| spawn_blocking(move || w.push(item))),
             repeat(waitlist)
                 .take(n)
-                .for_each_concurrent(None, |w| unblock(move || w.drain().for_each(drop))),
-        ));
+                .map(Ok)
+                .try_for_each_concurrent(None, |w| {
+                    spawn_blocking(move || w.drain().for_each(drop))
+                }),
+        ))?;
     }
 }

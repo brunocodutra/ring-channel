@@ -155,8 +155,6 @@ jobs:
       with:
         command: fuzz
         args: run -s ${{ matrix.sanitizer }} fuzzer -- -max_total_time=120
-      env:
-        SMOL_THREADS: 32
 
   coverage:
     needs: [test]

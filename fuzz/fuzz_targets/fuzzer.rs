@@ -1,37 +1,19 @@
 #![no_main]
 
 use futures::{future::*, prelude::*, stream::*};
-use libfuzzer_sys::arbitrary::{Arbitrary, Error, Unstructured};
+use libfuzzer_sys::arbitrary::{Arbitrary, Error as LibfuzzerError, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use ring_channel::*;
-use smol::{block_on, spawn};
-use std::{collections::HashSet, iter::repeat, num::NonZeroUsize};
+use std::{collections::HashSet, error::Error, iter::repeat, num::NonZeroUsize};
+use tokio::spawn;
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct Input {
-    data: Box<[u16]>,
+#[tokio::main]
+async fn fuzzer(
+    mut data: Box<[u16]>,
     senders: usize,
     receivers: usize,
     capacity: NonZeroUsize,
-}
-
-impl<'a> Arbitrary<'a> for Input {
-    fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self, Error> {
-        Ok(Self {
-            data: u.arbitrary()?,
-            senders: u.arbitrary::<u8>()?.into(),
-            receivers: u.arbitrary::<u8>()?.into(),
-            capacity: NonZeroUsize::new(u.arbitrary::<u8>()?.into())
-                .ok_or(Error::IncorrectFormat)?,
-        })
-    }
-}
-
-fuzz_target!(|input: Input| {
-    let mut data = input.data;
-    let capacity = input.capacity;
-    let senders = input.senders;
-    let receivers = input.receivers;
+) -> Result<(), Box<dyn Error>> {
     let chunk_size = if !data.is_empty() && senders > 0 {
         (data.len() + senders - 1) / senders
     } else {
@@ -41,18 +23,15 @@ fuzz_target!(|input: Input| {
     let (tx, rx) = ring_channel(capacity);
     let (txs, rxs) = (vec![tx; senders], vec![rx; receivers]);
 
-    let (mut received, results) = block_on(join(
-        join_all(rxs.into_iter().map(StreamExt::collect::<Vec<_>>).map(spawn))
-            .map(IntoIterator::into_iter)
-            .map(Iterator::flatten)
-            .map(Iterator::collect::<Box<[_]>>),
-        join_all(
-            txs.into_iter()
-                .zip(data.chunks(chunk_size).chain(repeat([].as_ref())))
-                .map(|(tx, data)| iter(data.to_owned()).map(Ok).forward(tx))
-                .map(spawn),
-        ),
-    ));
+    let sender = data
+        .chunks(chunk_size)
+        .chain(repeat([].as_ref()))
+        .zip(txs)
+        .map(|(data, tx)| spawn(iter(data.to_owned()).map(Ok).forward(tx)));
+
+    let receiver = rxs.into_iter().map(|rx| spawn(rx.collect::<Vec<_>>()));
+    let (received, results) = try_join(try_join_all(receiver), try_join_all(sender)).await?;
+    let mut received = received.into_iter().flatten().collect::<Box<[_]>>();
 
     if senders == 0 {
         assert!(
@@ -97,4 +76,30 @@ fuzz_target!(|input: Input| {
             );
         }
     }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct Input {
+    data: Box<[u16]>,
+    senders: usize,
+    receivers: usize,
+    capacity: NonZeroUsize,
+}
+
+impl<'a> Arbitrary<'a> for Input {
+    fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self, LibfuzzerError> {
+        Ok(Self {
+            data: u.arbitrary()?,
+            senders: u.arbitrary::<u8>()?.into(),
+            receivers: u.arbitrary::<u8>()?.into(),
+            capacity: NonZeroUsize::new(u.arbitrary::<u8>()?.into())
+                .ok_or(LibfuzzerError::IncorrectFormat)?,
+        })
+    }
+}
+
+fuzz_target!(|input: Input| {
+    fuzzer(input.data, input.senders, input.receivers, input.capacity).unwrap()
 });

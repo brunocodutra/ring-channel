@@ -75,13 +75,13 @@ mod tests {
     use super::*;
     use test_strategy::proptest;
 
-    #[test]
+    #[proptest]
     fn control_block_starts_connected() {
         let ctrl = ControlBlock::<()>::new(1);
         assert!(ctrl.connected.load(Ordering::Relaxed));
     }
 
-    #[test]
+    #[proptest]
     fn control_block_starts_with_reference_counters_equal_to_one() {
         let ctrl = ControlBlock::<()>::new(1);
         assert_eq!(ctrl.senders.load(Ordering::Relaxed), 1);
