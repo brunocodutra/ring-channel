@@ -94,15 +94,15 @@ mod tests {
     }
 
     #[proptest]
-    fn capacity_returns_the_maximum_buffer_size(#[strategy(1..=100usize)] capacity: usize) {
+    fn capacity_returns_the_maximum_buffer_size(#[strategy(1..=10usize)] capacity: usize) {
         let buffer = RingBuffer::<()>::new(capacity);
         assert_eq!(buffer.capacity(), capacity);
     }
 
     #[proptest]
     fn oldest_items_are_overwritten_on_overflow(
-        #[any(size_range(1..=100).lift())] items: Vec<char>,
-        #[strategy(1..=100usize)] capacity: usize,
+        #[any(size_range(1..=10).lift())] items: Vec<char>,
+        #[strategy(1..=10usize)] capacity: usize,
     ) {
         let buffer = RingBuffer::new(capacity);
 
@@ -119,11 +119,12 @@ mod tests {
         }
     }
 
+    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
     fn buffer_is_thread_safe(
-        #[strategy(1..=100usize)] m: usize,
-        #[strategy(1..=100usize)] n: usize,
-        #[strategy(1..=100usize)] capacity: usize,
+        #[strategy(1..=10usize)] m: usize,
+        #[strategy(1..=10usize)] n: usize,
+        #[strategy(1..=10usize)] capacity: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let buffer = Arc::new(RingBuffer::new(capacity));
