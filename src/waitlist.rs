@@ -72,7 +72,7 @@ mod tests {
 
     #[proptest]
     fn push_inserts_item_at_the_back_of_the_queue(
-        #[any(size_range(1..=100).lift())] items: Vec<char>,
+        #[any(size_range(1..=10).lift())] items: Vec<char>,
     ) {
         let waitlist = Waitlist::new();
 
@@ -86,7 +86,7 @@ mod tests {
 
     #[proptest]
     fn drain_removes_items_from_the_queue_in_fifo_order(
-        #[any(size_range(1..=100).lift())] items: Vec<char>,
+        #[any(size_range(1..=10).lift())] items: Vec<char>,
     ) {
         let waitlist = Waitlist::new();
 
@@ -99,10 +99,11 @@ mod tests {
         assert_eq!(waitlist.queue.len(), 0);
     }
 
+    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
     fn waitlist_is_thread_safe(
-        #[strategy(1..=100usize)] m: usize,
-        #[strategy(1..=100usize)] n: usize,
+        #[strategy(1..=10usize)] m: usize,
+        #[strategy(1..=10usize)] n: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let waitlist = Arc::new(Waitlist::new());

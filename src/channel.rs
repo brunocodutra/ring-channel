@@ -363,8 +363,8 @@ mod tests {
 
     #[proptest]
     fn send_succeeds_on_connected_channel(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, _rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
@@ -377,8 +377,8 @@ mod tests {
 
     #[proptest]
     fn send_fails_on_disconnected_channel(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, _) = ring_channel(NonZeroUsize::try_from(capacity)?);
@@ -393,8 +393,8 @@ mod tests {
 
     #[proptest]
     fn send_overwrites_old_messages(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
@@ -413,7 +413,7 @@ mod tests {
 
     #[proptest]
     fn try_recv_succeeds_on_non_empty_connected_channel(
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -436,7 +436,7 @@ mod tests {
 
     #[proptest]
     fn try_recv_succeeds_on_non_empty_disconnected_channel(
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (_, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -459,8 +459,8 @@ mod tests {
 
     #[proptest]
     fn try_recv_fails_on_empty_connected_channel(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[strategy(1..=100usize)] n: usize,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] n: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (_tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
@@ -477,8 +477,8 @@ mod tests {
 
     #[proptest]
     fn try_recv_fails_on_empty_disconnected_channel(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[strategy(1..=100usize)] n: usize,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] n: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
@@ -498,7 +498,7 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_succeeds_on_non_empty_connected_channel(
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -522,7 +522,7 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_succeeds_on_non_empty_disconnected_channel(
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (_, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -546,8 +546,8 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_fails_on_empty_disconnected_channel(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[strategy(1..=100usize)] n: usize,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] n: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
@@ -563,14 +563,18 @@ mod tests {
     }
 
     #[cfg(feature = "futures_api")]
+    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
-    fn recv_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
+    fn recv_wakes_on_disconnect(
+        #[strategy(1..=10usize)] m: usize,
+        #[strategy(1..=10usize)] n: usize,
+    ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
         rt.block_on(try_join(
             repeat(rx)
-                .take(n)
+                .take(m)
                 .map(Ok)
                 .try_for_each_concurrent(None, |mut rx| {
                     spawn_blocking(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
@@ -583,8 +587,9 @@ mod tests {
     }
 
     #[cfg(feature = "futures_api")]
+    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
-    fn recv_wakes_on_send(#[strategy(1..=100usize)] n: usize) {
+    fn recv_wakes_on_send(#[strategy(1..=10usize)] n: usize) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(n)?);
         let _prevent_disconnection = tx.clone();
@@ -608,8 +613,8 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn sink(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (mut tx, mut rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
@@ -628,8 +633,8 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn stream(
-        #[strategy(1..=100usize)] capacity: usize,
-        #[any(((1..=100).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[strategy(1..=10usize)] capacity: usize,
+        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
@@ -649,14 +654,18 @@ mod tests {
     }
 
     #[cfg(feature = "futures_api")]
+    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
-    fn stream_wakes_on_disconnect(#[strategy(1..=100usize)] n: usize) {
+    fn stream_wakes_on_disconnect(
+        #[strategy(1..=10usize)] m: usize,
+        #[strategy(1..=10usize)] n: usize,
+    ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
         rt.block_on(try_join(
             repeat(rx)
-                .take(n)
+                .take(m)
                 .map(Ok)
                 .try_for_each_concurrent(None, |mut rx| {
                     spawn(async move { assert_eq!(rx.next().await, None) })
@@ -671,6 +680,7 @@ mod tests {
     }
 
     #[cfg(feature = "futures_api")]
+    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
     fn stream_wakes_on_sink(#[strategy(1..=100usize)] n: usize) {
         let rt = runtime::Builder::new_multi_thread().build()?;
