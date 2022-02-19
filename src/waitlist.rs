@@ -19,14 +19,14 @@ impl<T> Waitlist<T> {
     // The queue is cleared, even if the iterator is not fully consumed.
     pub(super) fn drain(&self) -> impl Iterator<Item = T> + '_ {
         Drain {
-            registry: self,
+            waitlist: self,
             count: self.len.swap(0, Ordering::AcqRel),
         }
     }
 }
 
 struct Drain<'a, T> {
-    registry: &'a Waitlist<T>,
+    waitlist: &'a Waitlist<T>,
     count: usize,
 }
 
@@ -45,7 +45,7 @@ impl<'a, T> Iterator for Drain<'a, T> {
         }
 
         loop {
-            if let item @ Some(_) = self.registry.queue.pop() {
+            if let item @ Some(_) = self.waitlist.queue.pop() {
                 self.count -= 1;
                 return item;
             }
@@ -62,9 +62,9 @@ impl<'a, T> ExactSizeIterator for Drain<'a, T> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::{sync::Arc, vec::Vec};
-    use core::sync::atomic::Ordering;
-    use futures::{future::try_join, prelude::*, stream::repeat};
+    use alloc::{collections::BinaryHeap, sync::Arc, vec::Vec};
+    use core::{iter, sync::atomic::Ordering};
+    use futures::future::try_join_all;
     use proptest::collection::size_range;
     use test_strategy::proptest;
     use tokio::{runtime, task::spawn_blocking};
@@ -123,25 +123,26 @@ mod tests {
 
     #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
-    fn waitlist_is_thread_safe(
-        #[strategy(1..=10usize)] m: usize,
-        #[strategy(1..=10usize)] n: usize,
-    ) {
+    fn waitlist_is_linearizable(#[strategy(1..=10usize)] n: usize) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let waitlist = Arc::new(Waitlist::new());
 
-        rt.block_on(try_join(
-            repeat(waitlist.clone())
-                .enumerate()
-                .take(m)
-                .map(Ok)
-                .try_for_each_concurrent(None, |(item, w)| spawn_blocking(move || w.push(item))),
-            repeat(waitlist)
-                .take(n)
-                .map(Ok)
-                .try_for_each_concurrent(None, |w| {
-                    spawn_blocking(move || w.drain().for_each(drop))
-                }),
-        ))?;
+        let items = rt.block_on(async {
+            try_join_all(iter::repeat(waitlist).enumerate().take(n).map(|(i, w)| {
+                spawn_blocking(move || {
+                    w.push(i);
+                    w.drain().collect::<Vec<_>>()
+                })
+            }))
+            .await
+        })?;
+
+        let sorted = items
+            .into_iter()
+            .flatten()
+            .collect::<BinaryHeap<_>>()
+            .into_sorted_vec();
+
+        assert_eq!(sorted, (0..n).collect::<Vec<_>>());
     }
 }
