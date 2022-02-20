@@ -308,8 +308,8 @@ mod tests {
         let (tx, _rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
         let x = tx.clone();
-        assert_eq!(x.handle.senders.load(Ordering::Relaxed), 2);
-        assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 1);
+        assert_eq!(x.handle.senders.load(Ordering::SeqCst), 2);
+        assert_eq!(x.handle.receivers.load(Ordering::SeqCst), 1);
     }
 
     #[proptest]
@@ -317,36 +317,36 @@ mod tests {
         let (_tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
         let x = rx.clone();
-        assert_eq!(x.handle.senders.load(Ordering::Relaxed), 1);
-        assert_eq!(x.handle.receivers.load(Ordering::Relaxed), 2);
+        assert_eq!(x.handle.senders.load(Ordering::SeqCst), 1);
+        assert_eq!(x.handle.receivers.load(Ordering::SeqCst), 2);
     }
 
     #[proptest]
     fn dropping_sender_decrements_senders_counter() {
         let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
-        assert_eq!(rx.handle.senders.load(Ordering::Relaxed), 0);
-        assert_eq!(rx.handle.receivers.load(Ordering::Relaxed), 1);
+        assert_eq!(rx.handle.senders.load(Ordering::SeqCst), 0);
+        assert_eq!(rx.handle.receivers.load(Ordering::SeqCst), 1);
     }
 
     #[proptest]
     fn dropping_receiver_decrements_receivers_counter() {
         let (tx, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
-        assert_eq!(tx.handle.senders.load(Ordering::Relaxed), 1);
-        assert_eq!(tx.handle.receivers.load(Ordering::Relaxed), 0);
+        assert_eq!(tx.handle.senders.load(Ordering::SeqCst), 1);
+        assert_eq!(tx.handle.receivers.load(Ordering::SeqCst), 0);
     }
 
     #[proptest]
     fn channel_is_disconnected_if_there_are_no_senders() {
         let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
-        assert_eq!(rx.handle.senders.load(Ordering::Relaxed), 0);
-        assert!(!rx.handle.connected.load(Ordering::Relaxed));
+        assert_eq!(rx.handle.senders.load(Ordering::SeqCst), 0);
+        assert!(!rx.handle.connected.load(Ordering::SeqCst));
     }
 
     #[proptest]
     fn channel_is_disconnected_if_there_are_no_receivers() {
         let (tx, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
-        assert_eq!(tx.handle.receivers.load(Ordering::Relaxed), 0);
-        assert!(!tx.handle.connected.load(Ordering::Relaxed));
+        assert_eq!(tx.handle.receivers.load(Ordering::SeqCst), 0);
+        assert!(!tx.handle.connected.load(Ordering::SeqCst));
     }
 
     #[proptest]
@@ -682,7 +682,7 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
-    fn stream_wakes_on_sink(#[strategy(1..=100usize)] n: usize) {
+    fn stream_wakes_on_sink(#[strategy(1..=10usize)] n: usize) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(n)?);
         let _prevent_disconnection = tx.clone();
