@@ -164,7 +164,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sanitizer: [address, leak]
+        sanitizer: [address, leak, memory, thread]
     steps:
     - uses: actions/checkout@master
     - uses: actions-rs/toolchain@v1
@@ -172,13 +172,14 @@ jobs:
         override: true
         profile: minimal
         toolchain: nightly
+        components: rust-src
     - uses: actions-rs/install@v0.1
       with:
         crate: cargo-fuzz
     - uses: actions-rs/cargo@v1
       with:
         command: fuzz
-        args: run -s ${{ matrix.sanitizer }} fuzzer -- -max_total_time=120
+        args: run -s ${{ matrix.sanitizer }} fuzzer -Z build-std -- -max_total_time=120
 
   coverage:
     needs: [test]
