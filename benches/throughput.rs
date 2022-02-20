@@ -3,7 +3,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Thro
 use futures::future::{try_join, try_join_all};
 use futures::prelude::*;
 use ring_channel::{ring_channel, RingReceiver, RingSender, TryRecvError};
-use std::{fmt::Debug, hint::spin_loop, iter, mem::size_of, num::NonZeroUsize, time::Duration};
+use std::{collections::BTreeSet, fmt::Debug, hint::spin_loop, iter, mem::size_of, time::Duration};
 use tokio::runtime::Runtime;
 use tokio::task::{self, JoinHandle};
 
@@ -19,7 +19,7 @@ async fn run<R, const N: usize>(msgs: usize, cap: usize, p: usize, c: usize) -> 
 where
     R: Routine<[char; N]>,
 {
-    let (tx, rx) = ring_channel(NonZeroUsize::new(cap).unwrap());
+    let (tx, rx) = ring_channel(cap.try_into().unwrap());
     let producer = try_join_all(iter::repeat(tx).take(p).map(|tx| R::produce(tx, msgs / p)));
     let consumer = try_join_all(iter::repeat(rx).take(c).map(|rx| R::consume(rx, msgs / c)));
 
@@ -34,12 +34,12 @@ fn bench<R, const N: usize>(group: &mut BenchmarkGroup<WallTime>, p: usize, c: u
 where
     R: Debug + Default + Routine<[char; N]>,
 {
-    let prefix = format!("{:?}/{}B/{}x{}", R::default(), size_of::<[char; N]>(), p, c);
+    let prefix = format!("{}x{}/{:?}/{}B", p, c, R::default(), size_of::<[char; N]>());
 
-    let messages_per_iter = 256 * p;
+    let messages_per_iter = 128 * p;
     group.throughput(Throughput::Elements(messages_per_iter as u64));
 
-    for &cap in &[1, p + c] {
+    for cap in BTreeSet::from([1, 2, p + c]) {
         group.bench_function(format!("{}/{}", prefix, cap), |b| {
             b.to_async(Runtime::new().unwrap())
                 .iter_custom(|iters| run::<R, N>(iters as usize * messages_per_iter, cap, p, c));
