@@ -1,4 +1,4 @@
-use core::sync::atomic::*;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_queue::SegQueue;
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
@@ -28,6 +28,12 @@ impl<T> Waitlist<T> {
 struct Drain<'a, T> {
     registry: &'a Waitlist<T>,
     count: usize,
+}
+
+impl<'a, T> Drop for Drain<'a, T> {
+    fn drop(&mut self) {
+        self.for_each(drop);
+    }
 }
 
 impl<'a, T> Iterator for Drain<'a, T> {
@@ -95,6 +101,22 @@ mod tests {
         }
 
         assert_eq!(waitlist.drain().collect::<Vec<_>>(), items);
+        assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
+        assert_eq!(waitlist.queue.len(), 0);
+    }
+
+    #[proptest]
+    fn items_are_popped_if_drain_iterator_is_dropped(
+        #[any(size_range(1..=10).lift())] items: Vec<char>,
+    ) {
+        let waitlist = Waitlist::new();
+
+        for &item in &items {
+            waitlist.push(item);
+        }
+
+        drop(waitlist.drain());
+
         assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
         assert_eq!(waitlist.queue.len(), 0);
     }
