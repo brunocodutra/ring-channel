@@ -62,9 +62,9 @@ impl<T> Deref for ControlBlockRef<T> {
 
 impl<T> Drop for ControlBlockRef<T> {
     fn drop(&mut self) {
-        debug_assert!(!self.connected.load(Ordering::Relaxed));
-        debug_assert_eq!(self.senders.load(Ordering::Relaxed), 0);
-        debug_assert_eq!(self.receivers.load(Ordering::Relaxed), 0);
+        debug_assert!(!self.connected.load(Ordering::SeqCst));
+        debug_assert_eq!(self.senders.load(Ordering::SeqCst), 0);
+        debug_assert_eq!(self.receivers.load(Ordering::SeqCst), 0);
 
         unsafe { Box::from_raw(&**self as *const ControlBlock<T> as *mut ControlBlock<T>) };
     }
@@ -78,14 +78,14 @@ mod tests {
     #[proptest]
     fn control_block_starts_connected() {
         let ctrl = ControlBlock::<()>::new(1);
-        assert!(ctrl.connected.load(Ordering::Relaxed));
+        assert!(ctrl.connected.load(Ordering::SeqCst));
     }
 
     #[proptest]
     fn control_block_starts_with_reference_counters_equal_to_one() {
         let ctrl = ControlBlock::<()>::new(1);
-        assert_eq!(ctrl.senders.load(Ordering::Relaxed), 1);
-        assert_eq!(ctrl.receivers.load(Ordering::Relaxed), 1);
+        assert_eq!(ctrl.senders.load(Ordering::SeqCst), 1);
+        assert_eq!(ctrl.receivers.load(Ordering::SeqCst), 1);
     }
 
     #[proptest]

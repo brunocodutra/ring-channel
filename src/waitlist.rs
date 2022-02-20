@@ -72,7 +72,7 @@ mod tests {
     #[proptest]
     fn waitlist_starts_empty() {
         let waitlist = Waitlist::<()>::new();
-        assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
+        assert_eq!(waitlist.len.load(Ordering::SeqCst), 0);
         assert_eq!(waitlist.queue.len(), 0);
     }
 
@@ -86,7 +86,7 @@ mod tests {
             waitlist.push(item);
         }
 
-        assert_eq!(waitlist.len.load(Ordering::Relaxed), items.len());
+        assert_eq!(waitlist.len.load(Ordering::SeqCst), items.len());
         assert_eq!(waitlist.queue.len(), items.len());
     }
 
@@ -101,7 +101,7 @@ mod tests {
         }
 
         assert_eq!(waitlist.drain().collect::<Vec<_>>(), items);
-        assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
+        assert_eq!(waitlist.len.load(Ordering::SeqCst), 0);
         assert_eq!(waitlist.queue.len(), 0);
     }
 
@@ -117,7 +117,7 @@ mod tests {
 
         drop(waitlist.drain());
 
-        assert_eq!(waitlist.len.load(Ordering::Relaxed), 0);
+        assert_eq!(waitlist.len.load(Ordering::SeqCst), 0);
         assert_eq!(waitlist.queue.len(), 0);
     }
 
