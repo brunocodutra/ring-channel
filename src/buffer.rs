@@ -1,55 +1,64 @@
+use alloc::boxed::Box;
 use crossbeam_queue::ArrayQueue;
+use crossbeam_utils::atomic::AtomicCell;
 use derivative::Derivative;
-
-type AtomicOption<T> = crossbeam_utils::atomic::AtomicCell<Option<T>>;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum RingBuffer<T> {
+    Atomic(#[derivative(Debug = "ignore")] AtomicCell<Option<T>>),
+    Boxed(#[derivative(Debug = "ignore")] AtomicCell<Option<Box<T>>>),
     Queue(#[derivative(Debug = "ignore")] ArrayQueue<T>),
-    Cell(#[derivative(Debug = "ignore")] AtomicOption<T>),
 }
 
 impl<T> RingBuffer<T> {
     pub(super) fn new(capacity: usize) -> Self {
-        if capacity > 1 || !AtomicOption::<T>::is_lock_free() {
-            RingBuffer::Queue(ArrayQueue::new(capacity))
+        assert!(capacity > 0, "capacity must be non-zero");
+
+        if capacity == 1 && AtomicCell::<Option<T>>::is_lock_free() {
+            RingBuffer::Atomic(AtomicCell::new(None))
+        } else if capacity == 1 {
+            debug_assert!(AtomicCell::<Option<Box<T>>>::is_lock_free());
+            RingBuffer::Boxed(AtomicCell::new(None))
         } else {
-            RingBuffer::Cell(AtomicOption::new(None))
+            RingBuffer::Queue(ArrayQueue::new(capacity))
         }
     }
 
     #[cfg(test)]
     pub(super) fn capacity(&self) -> usize {
-        use RingBuffer::*;
         match self {
-            Queue(q) => q.capacity(),
-            Cell(_) => 1,
+            RingBuffer::Atomic(_) => 1,
+            RingBuffer::Boxed(_) => 1,
+            RingBuffer::Queue(q) => q.capacity(),
         }
     }
 
     pub(super) fn push(&self, mut value: T) {
-        use RingBuffer::*;
         match self {
-            Queue(q) => {
+            RingBuffer::Atomic(c) => {
+                c.store(Some(value));
+            }
+
+            RingBuffer::Boxed(b) => {
+                b.store(Some(Box::new(value)));
+            }
+
+            RingBuffer::Queue(q) => {
                 while let Err(v) = q.push(value) {
                     self.pop();
                     value = v;
                 }
             }
-
-            Cell(c) => {
-                c.swap(Some(value));
-            }
         }
     }
 
     pub(super) fn pop(&self) -> Option<T> {
-        use RingBuffer::*;
         match self {
-            Queue(q) => q.pop(),
-            Cell(c) => c.swap(None),
+            RingBuffer::Atomic(c) => c.take(),
+            RingBuffer::Boxed(b) => Some(*b.take()?),
+            RingBuffer::Queue(q) => q.pop(),
         }
     }
 }
@@ -65,11 +74,17 @@ mod tests {
     use test_strategy::proptest;
     use tokio::{runtime, task::spawn_blocking};
 
+    #[should_panic]
     #[proptest]
-    fn new_uses_atomic_cell_when_possible() {
+    fn new_panics_if_capacity_is_zero() {
+        RingBuffer::<()>::new(0);
+    }
+
+    #[proptest]
+    fn new_uses_atomic_cell_when_capacity_is_one() {
         assert_eq!(
             discriminant(&RingBuffer::<[char; 1]>::new(1)),
-            discriminant(&RingBuffer::Cell(Default::default()))
+            discriminant(&RingBuffer::Atomic(Default::default()))
         );
 
         assert_eq!(
@@ -79,24 +94,29 @@ mod tests {
 
         assert_eq!(
             discriminant(&RingBuffer::<[char; 4]>::new(1)),
-            discriminant(&RingBuffer::Queue(ArrayQueue::new(1)))
+            discriminant(&RingBuffer::Boxed(Default::default()))
+        );
+
+        assert_eq!(
+            discriminant(&RingBuffer::<[char; 4]>::new(2)),
+            discriminant(&RingBuffer::Queue(ArrayQueue::new(2)))
         );
 
         assert_eq!(
             discriminant(&RingBuffer::<RingSender<()>>::new(1)),
-            discriminant(&RingBuffer::Cell(Default::default()))
+            discriminant(&RingBuffer::Atomic(Default::default()))
         );
 
         assert_eq!(
             discriminant(&RingBuffer::<RingReceiver<()>>::new(1)),
-            discriminant(&RingBuffer::Cell(Default::default()))
+            discriminant(&RingBuffer::Atomic(Default::default()))
         );
     }
 
     #[proptest]
     fn capacity_returns_the_maximum_buffer_size(#[strategy(1..=10usize)] capacity: usize) {
-        let buffer = RingBuffer::<()>::new(capacity);
-        assert_eq!(buffer.capacity(), capacity);
+        assert_eq!(RingBuffer::<[char; 1]>::new(capacity).capacity(), capacity);
+        assert_eq!(RingBuffer::<[char; 4]>::new(capacity).capacity(), capacity);
     }
 
     #[proptest]
