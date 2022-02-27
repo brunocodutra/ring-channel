@@ -243,7 +243,7 @@ impl<T> RingBuffer<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RingReceiver, RingSender, Void};
+    use crate::Void;
     use alloc::{collections::BinaryHeap, sync::Arc, vec::Vec};
     use core::{iter, mem::discriminant};
     use futures::future::try_join_all;
@@ -277,16 +277,6 @@ mod tests {
         assert_eq!(
             discriminant(&RingBuffer::<[char; 4]>::new(2)),
             discriminant(&RingBuffer::Queue(CircularQueue::new(2)))
-        );
-
-        assert_eq!(
-            discriminant(&RingBuffer::<RingSender<Void>>::new(1)),
-            discriminant(&RingBuffer::Atomic(Default::default()))
-        );
-
-        assert_eq!(
-            discriminant(&RingBuffer::<RingReceiver<Void>>::new(1)),
-            discriminant(&RingBuffer::Atomic(Default::default()))
         );
     }
 
