@@ -7,9 +7,8 @@ use test_strategy::Arbitrary;
 /// An error that may be returned by [`RingSender::send`].
 ///
 /// [`RingSender::send`]: struct.RingSender.html#method.send
-#[derive(Derivative)]
+#[derive(Derivative, Copy, Clone, Eq, PartialEq)]
 #[derivative(Debug)]
-#[derive(Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub enum SendError<T> {
     /// The channel is disconnected.

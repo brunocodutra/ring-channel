@@ -192,3 +192,6 @@ mod waitlist;
 
 pub use channel::*;
 pub use error::*;
+
+#[cfg(test)]
+enum Void {}

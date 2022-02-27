@@ -243,7 +243,7 @@ impl<T> RingBuffer<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RingReceiver, RingSender};
+    use crate::{RingReceiver, RingSender, Void};
     use alloc::{collections::BinaryHeap, sync::Arc, vec::Vec};
     use core::{iter, mem::discriminant};
     use futures::future::try_join_all;
@@ -254,7 +254,7 @@ mod tests {
     #[should_panic]
     #[proptest]
     fn new_panics_if_capacity_is_zero() {
-        RingBuffer::<()>::new(0);
+        RingBuffer::<Void>::new(0);
     }
 
     #[proptest]
@@ -280,12 +280,12 @@ mod tests {
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<RingSender<()>>::new(1)),
+            discriminant(&RingBuffer::<RingSender<Void>>::new(1)),
             discriminant(&RingBuffer::Atomic(Default::default()))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<RingReceiver<()>>::new(1)),
+            discriminant(&RingBuffer::<RingReceiver<Void>>::new(1)),
             discriminant(&RingBuffer::Atomic(Default::default()))
         );
     }
