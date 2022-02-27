@@ -6,7 +6,7 @@ use derivative::Derivative;
 use futures::{task::*, Sink, Stream};
 
 #[cfg(feature = "futures_api")]
-use core::pin::Pin;
+use core::{mem, pin::Pin};
 
 /// The sending end of a [`ring_channel`].
 #[derive(Derivative)]
@@ -14,6 +14,10 @@ use core::pin::Pin;
 pub struct RingSender<T> {
     #[derivative(Debug = "ignore")]
     handle: ManuallyDrop<ControlBlockRef<T>>,
+
+    #[cfg(feature = "futures_api")]
+    #[derivative(Debug = "ignore")]
+    backoff: bool,
 }
 
 unsafe impl<T: Send> Send for RingSender<T> {}
@@ -21,7 +25,12 @@ unsafe impl<T: Send> Sync for RingSender<T> {}
 
 impl<T> RingSender<T> {
     fn new(handle: ManuallyDrop<ControlBlockRef<T>>) -> Self {
-        Self { handle }
+        Self {
+            handle,
+
+            #[cfg(feature = "futures_api")]
+            backoff: false,
+        }
     }
 
     /// Sends a message through the channel without blocking.
@@ -85,19 +94,31 @@ impl<T> Drop for RingSender<T> {
 impl<T> Sink<T> for RingSender<T> {
     type Error = SendError<T>;
 
-    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+    #[inline]
+    fn poll_ready(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.poll_flush(ctx)
     }
 
+    #[inline]
     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        self.send(item)?;
+        self.backoff = self.send(item)?.is_some();
         Ok(())
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+    #[inline]
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        if mem::take(&mut self.backoff) {
+            ctx.waker().wake_by_ref();
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(()))
+        }
     }
 
+    #[inline]
     fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
@@ -268,15 +289,14 @@ mod tests {
     use crate::Void;
     use alloc::{string::String, vec::Vec};
     use core::{cmp::min, iter};
-    use futures::future::try_join_all;
-    use futures::prelude::*;
     use futures::stream::{iter, repeat};
+    use futures::{future::try_join_all, prelude::*};
     use test_strategy::proptest;
     use tokio::runtime;
     use tokio::task::spawn_blocking;
 
     #[cfg(feature = "futures_api")]
-    use futures::future::try_join;
+    use futures::{future::try_join, task::noop_waker_ref};
 
     #[cfg(feature = "futures_api")]
     use tokio::task::spawn;
@@ -637,6 +657,37 @@ mod tests {
         assert_eq!(
             iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>(),
             msgs.iter().skip(overwritten).collect::<Vec<_>>()
+        );
+    }
+
+    #[cfg(feature = "futures_api")]
+    #[proptest]
+    fn sender_sets_backoff_to_true_if_sink_overwrites_on_send() {
+        let (mut tx, _rx) = ring_channel(NonZeroUsize::try_from(1)?);
+
+        assert!(!tx.backoff);
+        assert_eq!(Pin::new(&mut tx).start_send(()), Ok(()));
+        assert!(!tx.backoff);
+        assert_eq!(Pin::new(&mut tx).start_send(()), Ok(()));
+        assert!(tx.backoff);
+    }
+
+    #[cfg(feature = "futures_api")]
+    #[proptest]
+    fn sender_yields_once_on_poll_ready_if_backoff_is_true(#[strategy(1..=10usize)] cap: usize) {
+        let (mut tx, _) = ring_channel::<()>(NonZeroUsize::try_from(cap)?);
+        tx.backoff = true;
+
+        assert_eq!(
+            Pin::new(&mut tx).poll_ready(&mut Context::from_waker(noop_waker_ref())),
+            Poll::Pending
+        );
+
+        assert!(!tx.backoff);
+
+        assert_eq!(
+            Pin::new(&mut tx).poll_ready(&mut Context::from_waker(noop_waker_ref())),
+            Poll::Ready(Ok(()))
         );
     }
 
