@@ -62,6 +62,7 @@ impl<'a, T> ExactSizeIterator for Drain<'a, T> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Void;
     use alloc::{collections::BinaryHeap, sync::Arc, vec::Vec};
     use core::{iter, sync::atomic::Ordering};
     use futures::future::try_join_all;
@@ -71,7 +72,7 @@ mod tests {
 
     #[proptest]
     fn waitlist_starts_empty() {
-        let waitlist = Waitlist::<()>::new();
+        let waitlist = Waitlist::<Void>::new();
         assert_eq!(waitlist.len.load(Ordering::SeqCst), 0);
         assert_eq!(waitlist.queue.len(), 0);
     }

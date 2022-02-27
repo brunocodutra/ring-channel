@@ -37,8 +37,13 @@ impl<T> ControlBlock<T> {
     }
 }
 
-#[derive(Derivative, Eq, PartialEq)]
-#[derivative(Debug(bound = ""), Clone(bound = ""))]
+#[derive(Derivative)]
+#[derivative(
+    Debug(bound = ""),
+    Clone(bound = ""),
+    Eq(bound = ""),
+    PartialEq(bound = "")
+)]
 pub(super) struct ControlBlockRef<T>(NonNull<ControlBlock<T>>);
 
 impl<T> Unpin for ControlBlockRef<T> {}
@@ -73,24 +78,25 @@ impl<T> Drop for ControlBlockRef<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Void;
     use test_strategy::proptest;
 
     #[proptest]
     fn control_block_starts_connected() {
-        let ctrl = ControlBlock::<()>::new(1);
+        let ctrl = ControlBlock::<Void>::new(1);
         assert!(ctrl.connected.load(Ordering::SeqCst));
     }
 
     #[proptest]
     fn control_block_starts_with_reference_counters_equal_to_one() {
-        let ctrl = ControlBlock::<()>::new(1);
+        let ctrl = ControlBlock::<Void>::new(1);
         assert_eq!(ctrl.senders.load(Ordering::SeqCst), 1);
         assert_eq!(ctrl.receivers.load(Ordering::SeqCst), 1);
     }
 
     #[proptest]
     fn control_block_allocates_buffer_given_capacity(#[strategy(1..=10usize)] capacity: usize) {
-        let ctrl = ControlBlock::<()>::new(capacity);
+        let ctrl = ControlBlock::<Void>::new(capacity);
         assert_eq!(ctrl.buffer.capacity(), capacity);
     }
 }

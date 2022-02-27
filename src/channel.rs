@@ -9,8 +9,8 @@ use futures::{task::*, Sink, Stream};
 use core::pin::Pin;
 
 /// The sending end of a [`ring_channel`].
-#[derive(Derivative, Eq, PartialEq)]
-#[derivative(Debug(bound = ""))]
+#[derive(Derivative)]
+#[derivative(Debug(bound = ""), Eq(bound = ""), PartialEq(bound = ""))]
 pub struct RingSender<T> {
     #[derivative(Debug = "ignore")]
     handle: ManuallyDrop<ControlBlockRef<T>>,
@@ -102,8 +102,8 @@ impl<T> Sink<T> for RingSender<T> {
 }
 
 /// The receiving end of a [`ring_channel`].
-#[derive(Derivative, Eq, PartialEq)]
-#[derivative(Debug(bound = ""))]
+#[derive(Derivative)]
+#[derivative(Debug(bound = ""), Eq(bound = ""), PartialEq(bound = ""))]
 pub struct RingReceiver<T> {
     #[derivative(Debug = "ignore")]
     handle: ManuallyDrop<ControlBlockRef<T>>,
@@ -263,6 +263,7 @@ pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Void;
     use alloc::{string::String, vec::Vec};
     use core::{cmp::min, iter};
     use futures::prelude::*;
@@ -279,14 +280,14 @@ mod tests {
 
     #[proptest]
     fn ring_channel_is_associated_with_a_single_control_block() {
-        let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (tx, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         assert_eq!(tx.handle, rx.handle);
     }
 
     #[proptest]
     fn senders_are_equal_if_they_are_associated_with_the_same_ring_channel() {
-        let (s1, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
-        let (s2, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (s1, _) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        let (s2, _) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
 
         assert_eq!(s1, s1.clone());
         assert_eq!(s2, s2.clone());
@@ -295,8 +296,8 @@ mod tests {
 
     #[proptest]
     fn receivers_are_equal_if_they_are_associated_with_the_same_ring_channel() {
-        let (_, r1) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
-        let (_, r2) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (_, r1) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        let (_, r2) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
 
         assert_eq!(r1, r1.clone());
         assert_eq!(r2, r2.clone());
@@ -305,7 +306,7 @@ mod tests {
 
     #[proptest]
     fn cloning_sender_increments_senders() {
-        let (tx, _rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (tx, _rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
         let x = tx.clone();
         assert_eq!(x.handle.senders.load(Ordering::SeqCst), 2);
@@ -314,7 +315,7 @@ mod tests {
 
     #[proptest]
     fn cloning_receiver_increments_receivers_counter() {
-        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (_tx, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
         let x = rx.clone();
         assert_eq!(x.handle.senders.load(Ordering::SeqCst), 1);
@@ -323,28 +324,28 @@ mod tests {
 
     #[proptest]
     fn dropping_sender_decrements_senders_counter() {
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (_, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         assert_eq!(rx.handle.senders.load(Ordering::SeqCst), 0);
         assert_eq!(rx.handle.receivers.load(Ordering::SeqCst), 1);
     }
 
     #[proptest]
     fn dropping_receiver_decrements_receivers_counter() {
-        let (tx, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (tx, _) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         assert_eq!(tx.handle.senders.load(Ordering::SeqCst), 1);
         assert_eq!(tx.handle.receivers.load(Ordering::SeqCst), 0);
     }
 
     #[proptest]
     fn channel_is_disconnected_if_there_are_no_senders() {
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (_, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         assert_eq!(rx.handle.senders.load(Ordering::SeqCst), 0);
         assert!(!rx.handle.connected.load(Ordering::SeqCst));
     }
 
     #[proptest]
     fn channel_is_disconnected_if_there_are_no_receivers() {
-        let (tx, _) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
+        let (tx, _) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         assert_eq!(tx.handle.receivers.load(Ordering::SeqCst), 0);
         assert!(!tx.handle.connected.load(Ordering::SeqCst));
     }
@@ -352,13 +353,13 @@ mod tests {
     #[proptest]
     fn endpoints_are_safe_to_send_across_threads() {
         fn must_be_send(_: impl Send) {}
-        must_be_send(ring_channel::<()>(NonZeroUsize::try_from(1)?));
+        must_be_send(ring_channel::<Void>(NonZeroUsize::try_from(1)?));
     }
 
     #[proptest]
     fn endpoints_are_safe_to_share_across_threads() {
         fn must_be_sync(_: impl Sync) {}
-        must_be_sync(ring_channel::<()>(NonZeroUsize::try_from(1)?));
+        must_be_sync(ring_channel::<Void>(NonZeroUsize::try_from(1)?));
     }
 
     #[proptest]
