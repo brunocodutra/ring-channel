@@ -291,39 +291,39 @@ mod tests {
     }
 
     #[proptest]
-    fn capacity_returns_the_maximum_buffer_size(#[strategy(1..=10usize)] capacity: usize) {
-        assert_eq!(RingBuffer::<[char; 1]>::new(capacity).capacity(), capacity);
-        assert_eq!(RingBuffer::<[char; 4]>::new(capacity).capacity(), capacity);
+    fn capacity_returns_the_maximum_buffer_size(#[strategy(1..=10usize)] cap: usize) {
+        assert_eq!(RingBuffer::<[char; 1]>::new(cap).capacity(), cap);
+        assert_eq!(RingBuffer::<[char; 4]>::new(cap).capacity(), cap);
     }
 
     #[proptest]
     fn oldest_items_are_overwritten_on_overflow(
-        #[strategy(1..=10usize)] capacity: usize,
-        #[any(size_range(#capacity..=10).lift())] items: Vec<char>,
+        #[strategy(1..=10usize)] cap: usize,
+        #[any(size_range(#cap..=10).lift())] items: Vec<char>,
     ) {
-        let buffer = RingBuffer::new(capacity);
+        let buffer = RingBuffer::new(cap);
 
-        for &item in &items[..capacity] {
+        for &item in &items[..cap] {
             assert_eq!(buffer.push(item), None);
         }
 
-        for (i, &item) in (0..(items.len() - capacity)).zip(&items[capacity..]) {
+        for (i, &item) in (0..(items.len() - cap)).zip(&items[cap..]) {
             assert_eq!(buffer.push(item), Some(items[i]));
         }
 
         assert_eq!(
             iter::from_fn(|| buffer.pop()).collect::<Vec<_>>(),
-            items[(items.len() - capacity)..]
+            items[(items.len() - cap)..]
         );
     }
 
     #[proptest]
     fn buffer_is_linearizable(
         #[strategy(1..=10usize)] n: usize,
-        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] cap: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let buffer = Arc::new(RingBuffer::new(capacity));
+        let buffer = Arc::new(RingBuffer::new(cap));
 
         let items = rt.block_on(async {
             try_join_all(iter::repeat(buffer).enumerate().take(n).map(|(i, b)| {

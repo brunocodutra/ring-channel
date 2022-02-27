@@ -27,11 +27,12 @@ impl<T> RingSender<T> {
     /// Sends a message through the channel without blocking.
     ///
     /// * If the channel is not disconnected, the message is pushed into the internal ring buffer.
-    ///     * If the internal ring buffer is full, the oldest pending message is overwritten.
+    ///     * If the internal ring buffer is full, the oldest pending message is overwritten
+    ///       and returned as `Ok(Some(_))`, otherwise `Ok(None)` is returned.
     /// * If the channel is disconnected, [`SendError::Disconnected`] is returned.
-    pub fn send(&mut self, message: T) -> Result<(), SendError<T>> {
+    pub fn send(&mut self, message: T) -> Result<Option<T>, SendError<T>> {
         if self.handle.receivers.load(Ordering::Acquire) > 0 {
-            self.handle.buffer.push(message);
+            let overwritten = self.handle.buffer.push(message);
 
             // A full memory barrier is necessary to ensure storing the message
             // happens before waking receivers.
@@ -42,7 +43,7 @@ impl<T> RingSender<T> {
             #[cfg(feature = "futures_api")]
             self.handle.waitlist.drain().for_each(Waker::wake);
 
-            Ok(())
+            Ok(overwritten)
         } else {
             Err(SendError::Disconnected(message))
         }
@@ -89,7 +90,8 @@ impl<T> Sink<T> for RingSender<T> {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        self.send(item)
+        self.send(item)?;
+        Ok(())
     }
 
     fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -266,6 +268,7 @@ mod tests {
     use crate::Void;
     use alloc::{string::String, vec::Vec};
     use core::{cmp::min, iter};
+    use futures::future::try_join_all;
     use futures::prelude::*;
     use futures::stream::{iter, repeat};
     use test_strategy::proptest;
@@ -364,25 +367,25 @@ mod tests {
 
     #[proptest]
     fn send_succeeds_on_connected_channel(
-        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] cap: usize,
         #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let (tx, _rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
+        let (tx, _rx) = ring_channel(NonZeroUsize::try_from(cap)?);
 
         rt.block_on(iter(msgs).map(Ok).try_for_each_concurrent(None, |msg| {
             let mut tx = tx.clone();
-            spawn_blocking(move || assert_eq!(tx.send(msg), Ok(())))
+            spawn_blocking(move || assert!(tx.send(msg).is_ok()))
         }))?;
     }
 
     #[proptest]
     fn send_fails_on_disconnected_channel(
-        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] cap: usize,
         #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let (tx, _) = ring_channel(NonZeroUsize::try_from(capacity)?);
+        let (tx, _) = ring_channel(NonZeroUsize::try_from(cap)?);
 
         rt.block_on(iter(msgs).map(Ok).try_for_each_concurrent(None, |msg| {
             let mut tx = tx.clone();
@@ -394,17 +397,19 @@ mod tests {
 
     #[proptest]
     fn send_overwrites_old_messages(
-        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] cap: usize,
         #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
-        let rt = runtime::Builder::new_multi_thread().build()?;
-        let (tx, rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
-        let overwritten = msgs.len() - min(msgs.len(), capacity);
+        let (mut tx, rx) = ring_channel(NonZeroUsize::try_from(cap)?);
+        let overwritten = msgs.len() - min(msgs.len(), cap);
 
-        rt.block_on(iter(msgs.clone()).map(Ok).try_for_each(|msg| {
-            let mut tx = tx.clone();
-            spawn_blocking(move || assert_eq!(tx.send(msg), Ok(())))
-        }))?;
+        for msg in msgs.iter().take(cap) {
+            assert_eq!(tx.send(msg.clone()), Ok(None));
+        }
+
+        for (msg, old) in msgs.iter().skip(cap).zip(&msgs) {
+            assert_eq!(tx.send(msg.clone()), Ok(Some(old.clone())));
+        }
 
         assert_eq!(
             iter::from_fn(|| rx.handle.buffer.pop()).collect::<Vec<_>>(),
@@ -423,13 +428,14 @@ mod tests {
             tx.handle.buffer.push(msg);
         }
 
-        let mut received = rt.block_on(
-            repeat(rx)
-                .take(msgs.len())
-                .map(Ok)
-                .and_then(|mut rx| spawn_blocking(move || rx.try_recv().unwrap()))
-                .try_collect::<Vec<_>>(),
-        )?;
+        let mut received = rt.block_on(async {
+            try_join_all(
+                iter::repeat(rx)
+                    .take(msgs.len())
+                    .map(|mut rx| spawn_blocking(move || rx.try_recv().unwrap())),
+            )
+            .await
+        })?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -446,13 +452,14 @@ mod tests {
             rx.handle.buffer.push(msg);
         }
 
-        let mut received = rt.block_on(
-            repeat(rx)
-                .take(msgs.len())
-                .map(Ok)
-                .and_then(|mut rx| spawn_blocking(move || rx.try_recv().unwrap()))
-                .try_collect::<Vec<_>>(),
-        )?;
+        let mut received = rt.block_on(async {
+            try_join_all(
+                iter::repeat(rx)
+                    .take(msgs.len())
+                    .map(|mut rx| spawn_blocking(move || rx.try_recv().unwrap())),
+            )
+            .await
+        })?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -460,11 +467,11 @@ mod tests {
 
     #[proptest]
     fn try_recv_fails_on_empty_connected_channel(
-        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] cap: usize,
         #[strategy(1..=10usize)] n: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
+        let (_tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(cap)?);
 
         rt.block_on(
             repeat(rx)
@@ -478,11 +485,11 @@ mod tests {
 
     #[proptest]
     fn try_recv_fails_on_empty_disconnected_channel(
-        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] cap: usize,
         #[strategy(1..=10usize)] n: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(cap)?);
 
         rt.block_on(
             repeat(rx)
@@ -508,13 +515,14 @@ mod tests {
             tx.handle.buffer.push(msg);
         }
 
-        let mut received = rt.block_on(
-            repeat(rx)
-                .take(msgs.len())
-                .map(Ok)
-                .and_then(|mut rx| spawn_blocking(move || rx.recv().unwrap()))
-                .try_collect::<Vec<_>>(),
-        )?;
+        let mut received = rt.block_on(async {
+            try_join_all(
+                iter::repeat(rx)
+                    .take(msgs.len())
+                    .map(|mut rx| spawn_blocking(move || rx.recv().unwrap())),
+            )
+            .await
+        })?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -532,13 +540,14 @@ mod tests {
             rx.handle.buffer.push(msg);
         }
 
-        let mut received = rt.block_on(
-            repeat(rx)
-                .take(msgs.len())
-                .map(Ok)
-                .and_then(|mut rx| spawn_blocking(move || rx.recv().unwrap()))
-                .try_collect::<Vec<_>>(),
-        )?;
+        let mut received = rt.block_on(async {
+            try_join_all(
+                iter::repeat(rx)
+                    .take(msgs.len())
+                    .map(|mut rx| spawn_blocking(move || rx.recv().unwrap())),
+            )
+            .await
+        })?;
 
         received.sort_by_key(|(k, _)| *k);
         assert_eq!(received, msgs.into_iter().enumerate().collect::<Vec<_>>());
@@ -547,11 +556,11 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_fails_on_empty_disconnected_channel(
-        #[strategy(1..=10usize)] capacity: usize,
+        #[strategy(1..=10usize)] cap: usize,
         #[strategy(1..=10usize)] n: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(capacity)?);
+        let (_, rx) = ring_channel::<()>(NonZeroUsize::try_from(cap)?);
 
         rt.block_on(
             repeat(rx)
@@ -606,20 +615,20 @@ mod tests {
                 .take(n)
                 .map(Ok)
                 .try_for_each_concurrent(None, |mut tx| {
-                    spawn_blocking(move || assert_eq!(tx.send(()), Ok(())))
+                    spawn_blocking(move || assert!(tx.send(()).is_ok()))
                 }),
         ))?;
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
-    fn sink(
-        #[strategy(1..=10usize)] capacity: usize,
+    fn sender_implements_sink(
+        #[strategy(1..=10usize)] cap: usize,
         #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let (mut tx, mut rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
-        let overwritten = msgs.len() - min(msgs.len(), capacity);
+        let (mut tx, mut rx) = ring_channel(NonZeroUsize::try_from(cap)?);
+        let overwritten = msgs.len() - min(msgs.len(), cap);
 
         assert_eq!(rt.block_on(iter(&msgs).map(Ok).forward(&mut tx)), Ok(()));
 
@@ -633,18 +642,17 @@ mod tests {
 
     #[cfg(feature = "futures_api")]
     #[proptest]
-    fn stream(
-        #[strategy(1..=10usize)] capacity: usize,
+    fn receiver_implements_stream(
+        #[strategy(1..=10usize)] cap: usize,
         #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
-        let (tx, rx) = ring_channel(NonZeroUsize::try_from(capacity)?);
-        let overwritten = msgs.len() - min(msgs.len(), capacity);
+        let (mut tx, rx) = ring_channel(NonZeroUsize::try_from(cap)?);
+        let overwritten = msgs.len() - min(msgs.len(), cap);
 
-        rt.block_on(iter(msgs.clone()).map(Ok).try_for_each(|msg| {
-            let mut tx = tx.clone();
-            spawn_blocking(move || assert_eq!(tx.send(msg), Ok(())))
-        }))?;
+        for msg in &msgs {
+            assert!(tx.send(msg.clone()).is_ok());
+        }
 
         drop(tx); // hang-up
 
