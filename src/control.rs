@@ -95,8 +95,8 @@ mod tests {
     }
 
     #[proptest]
-    fn control_block_allocates_buffer_given_capacity(#[strategy(1..=10usize)] capacity: usize) {
-        let ctrl = ControlBlock::<Void>::new(capacity);
-        assert_eq!(ctrl.buffer.capacity(), capacity);
+    fn control_block_allocates_buffer_given_capacity(#[strategy(1..=10usize)] cap: usize) {
+        let ctrl = ControlBlock::<Void>::new(cap);
+        assert_eq!(ctrl.buffer.capacity(), cap);
     }
 }
