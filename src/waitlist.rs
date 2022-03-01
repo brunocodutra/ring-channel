@@ -1,70 +1,61 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_queue::SegQueue;
+use crate::atomic::AtomicOption;
 use crossbeam_utils::CachePadded;
 use derivative::Derivative;
+use slotmap::{DefaultKey, HopSlotMap};
+use spin::RwLock;
+
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(super) struct Slot(DefaultKey);
 
 #[derive(Derivative, Debug)]
 #[derivative(Default(bound = "", new = "true"))]
 pub(super) struct Waitlist<T> {
-    len: CachePadded<AtomicUsize>,
-    queue: SegQueue<T>,
+    items: CachePadded<RwLock<HopSlotMap<DefaultKey, AtomicOption<T>>>>,
 }
 
 impl<T> Waitlist<T> {
-    pub(super) fn push(&self, item: T) {
-        self.len.fetch_add(1, Ordering::AcqRel);
-        self.queue.push(item);
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn len(&self) -> usize {
+        self.items.read().len()
     }
 
-    // The queue is cleared, even if the iterator is not fully consumed.
-    pub(super) fn drain(&self) -> impl Iterator<Item = T> + '_ {
-        Drain {
-            waitlist: self,
-            count: self.len.swap(0, Ordering::AcqRel),
-        }
-    }
-}
-
-struct Drain<'a, T> {
-    waitlist: &'a Waitlist<T>,
-    count: usize,
-}
-
-impl<'a, T> Drop for Drain<'a, T> {
-    fn drop(&mut self) {
-        self.for_each(drop);
-    }
-}
-
-impl<'a, T> Iterator for Drain<'a, T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.count == 0 {
-            return None;
-        }
-
-        loop {
-            if let item @ Some(_) = self.waitlist.queue.pop() {
-                self.count -= 1;
-                return item;
-            }
-        }
+    pub(super) fn register(&self) -> Slot {
+        Slot(self.items.write().insert(Default::default()))
     }
 
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.count, self.count.into())
+    pub(super) fn deregister(&self, Slot(k): Slot) -> Option<T> {
+        self.items.write().remove(k).unwrap().into_inner()
+    }
+
+    pub(super) fn insert(&self, Slot(k): Slot, item: T) -> Option<T> {
+        self.items.read()[k].swap(item)
+    }
+
+    pub(super) fn remove(&self, Slot(k): Slot) -> Option<T> {
+        self.items.read()[k].take()
+    }
+
+    pub(super) fn pop(&self) -> Option<T> {
+        self.items.read().values().find_map(AtomicOption::take)
     }
 }
 
-impl<'a, T> ExactSizeIterator for Drain<'a, T> {}
+#[cfg(test)]
+impl<T: Clone> Waitlist<T> {
+    #[inline]
+    pub(super) fn get(&self, Slot(k): Slot) -> Option<T> {
+        self.items.write()[k].get()
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Void;
-    use alloc::{collections::BinaryHeap, sync::Arc, vec::Vec};
-    use core::{iter, sync::atomic::Ordering};
+    use alloc::collections::{BTreeSet, BinaryHeap};
+    use alloc::{sync::Arc, vec::Vec};
+    use core::iter;
     use futures::future::try_join_all;
     use proptest::collection::size_range;
     use test_strategy::proptest;
@@ -73,66 +64,119 @@ mod tests {
     #[proptest]
     fn waitlist_starts_empty() {
         let waitlist = Waitlist::<Void>::new();
-        assert_eq!(waitlist.len.load(Ordering::SeqCst), 0);
-        assert_eq!(waitlist.queue.len(), 0);
+        assert_eq!(waitlist.items.read().len(), 0);
     }
 
     #[proptest]
-    fn push_inserts_item_at_the_back_of_the_queue(
-        #[any(size_range(1..=10).lift())] items: Vec<char>,
-    ) {
+    fn register_allocates_slot(#[strategy(1..=10usize)] n: usize) {
+        let waitlist = Waitlist::<Void>::new();
+
+        let slots = iter::repeat_with(|| waitlist.register())
+            .take(n)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            Vec::from_iter(BTreeSet::from_iter(slots.clone())),
+            BinaryHeap::from(slots).into_sorted_vec()
+        );
+
+        assert_eq!(waitlist.items.read().len(), n);
+    }
+
+    #[proptest]
+    fn deregister_deallocates_slot(#[strategy(1..=10usize)] n: usize) {
+        let waitlist = Waitlist::<()>::new();
+
+        for _ in 0..n {
+            let slot = waitlist.register();
+            assert_eq!(waitlist.deregister(slot), None);
+        }
+
+        assert_eq!(waitlist.items.read().len(), 0);
+    }
+
+    #[proptest]
+    fn deregister_returns_current_item(#[any(size_range(1..=10).lift())] items: Vec<u8>) {
+        let waitlist = Waitlist::new();
+
+        for item in items {
+            let slot = waitlist.register();
+            assert_eq!(waitlist.insert(slot, item), None);
+            assert_eq!(waitlist.deregister(slot), Some(item));
+        }
+
+        assert_eq!(waitlist.items.read().len(), 0);
+    }
+
+    #[proptest]
+    fn inserts_replaces_current_item(#[any(size_range(1..=10).lift())] items: Vec<u8>) {
+        let waitlist = Waitlist::new();
+
+        let slot = waitlist.register();
+        assert_eq!(waitlist.insert(slot, items[0]), None);
+
+        for (&prev, &item) in items.iter().zip(&items[1..]) {
+            assert_eq!(waitlist.insert(slot, item), Some(prev));
+        }
+
+        assert_eq!(waitlist.items.read().len(), 1);
+    }
+
+    #[proptest]
+    fn remove_takes_item(item: u8) {
+        let waitlist = Waitlist::new();
+        let slot = waitlist.register();
+        waitlist.insert(slot, item);
+        assert_eq!(waitlist.remove(slot), Some(item));
+        assert_eq!(waitlist.remove(slot), None);
+        assert_eq!(waitlist.items.read().len(), 1);
+    }
+
+    #[proptest]
+    fn get_clones_item(item: u8) {
+        let waitlist = Waitlist::new();
+        let slot = waitlist.register();
+        waitlist.insert(slot, item);
+        assert_eq!(waitlist.get(slot), Some(item));
+        assert_eq!(waitlist.get(slot), Some(item));
+        assert_eq!(waitlist.items.read().len(), 1);
+    }
+
+    #[proptest]
+    fn pop_removes_one_item_from_any_slot(#[any(size_range(1..=10).lift())] items: Vec<u8>) {
         let waitlist = Waitlist::new();
 
         for &item in &items {
-            waitlist.push(item);
+            let slot = waitlist.register();
+            waitlist.insert(slot, item);
         }
 
-        assert_eq!(waitlist.len.load(Ordering::SeqCst), items.len());
-        assert_eq!(waitlist.queue.len(), items.len());
+        assert_eq!(
+            iter::from_fn(|| waitlist.pop())
+                .collect::<BinaryHeap<_>>()
+                .into_sorted_vec(),
+            BinaryHeap::from(items).into_sorted_vec()
+        );
     }
 
     #[proptest]
-    fn drain_removes_items_from_the_queue_in_fifo_order(
-        #[any(size_range(1..=10).lift())] items: Vec<char>,
+    fn waitlist_is_linearizable(
+        #[strategy(1..=10usize)] m: usize,
+        #[strategy(1..=10usize)] n: usize,
     ) {
-        let waitlist = Waitlist::new();
-
-        for &item in &items {
-            waitlist.push(item);
-        }
-
-        assert_eq!(waitlist.drain().collect::<Vec<_>>(), items);
-        assert_eq!(waitlist.len.load(Ordering::SeqCst), 0);
-        assert_eq!(waitlist.queue.len(), 0);
-    }
-
-    #[proptest]
-    fn items_are_popped_if_drain_iterator_is_dropped(
-        #[any(size_range(1..=10).lift())] items: Vec<char>,
-    ) {
-        let waitlist = Waitlist::new();
-
-        for &item in &items {
-            waitlist.push(item);
-        }
-
-        drop(waitlist.drain());
-
-        assert_eq!(waitlist.len.load(Ordering::SeqCst), 0);
-        assert_eq!(waitlist.queue.len(), 0);
-    }
-
-    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
-    #[proptest]
-    fn waitlist_is_linearizable(#[strategy(1..=10usize)] n: usize) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let waitlist = Arc::new(Waitlist::new());
 
         let items = rt.block_on(async {
-            try_join_all(iter::repeat(waitlist).enumerate().take(n).map(|(i, w)| {
+            try_join_all(iter::repeat(waitlist).enumerate().take(m).map(|(i, w)| {
                 spawn_blocking(move || {
-                    w.push(i);
-                    w.drain().collect::<Vec<_>>()
+                    let slot = w.register();
+                    (i * n..(i + 1) * n)
+                        .flat_map(|j| match w.insert(slot, j) {
+                            None => w.pop(),
+                            item => item,
+                        })
+                        .collect::<Vec<_>>()
                 })
             }))
             .await
@@ -144,6 +188,6 @@ mod tests {
             .collect::<BinaryHeap<_>>()
             .into_sorted_vec();
 
-        assert_eq!(sorted, (0..n).collect::<Vec<_>>());
+        assert_eq!(sorted, (0..m * n).collect::<Vec<_>>());
     }
 }

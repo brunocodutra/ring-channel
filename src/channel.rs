@@ -3,6 +3,9 @@ use core::{mem::ManuallyDrop, num::NonZeroUsize, sync::atomic::*};
 use derivative::Derivative;
 
 #[cfg(feature = "futures_api")]
+use crate::waitlist::Slot;
+
+#[cfg(feature = "futures_api")]
 use futures::{task::*, Sink, Stream};
 
 #[cfg(feature = "futures_api")]
@@ -12,11 +15,10 @@ use core::{mem, pin::Pin};
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""), Eq(bound = ""), PartialEq(bound = ""))]
 pub struct RingSender<T> {
-    #[derivative(Debug = "ignore")]
     handle: ManuallyDrop<ControlBlockRef<T>>,
 
     #[cfg(feature = "futures_api")]
-    #[derivative(Debug = "ignore")]
+    #[derivative(PartialEq = "ignore")]
     backoff: bool,
 }
 
@@ -43,14 +45,16 @@ impl<T> RingSender<T> {
         if self.handle.receivers.load(Ordering::Acquire) > 0 {
             let overwritten = self.handle.buffer.push(message);
 
-            // A full memory barrier is necessary to ensure storing the message
-            // happens before waking receivers.
             #[cfg(feature = "futures_api")]
-            fence(Ordering::SeqCst);
+            if overwritten.is_none() {
+                // A full memory barrier is necessary to ensure that storing the message
+                // happens before waking receivers.
+                fence(Ordering::SeqCst);
 
-            // Drain all items in case any has become stale.
-            #[cfg(feature = "futures_api")]
-            self.handle.waitlist.drain().for_each(Waker::wake);
+                if let Some(waker) = self.handle.waitlist.pop() {
+                    waker.wake();
+                }
+            }
 
             Ok(overwritten)
         } else {
@@ -70,14 +74,16 @@ impl<T> Drop for RingSender<T> {
     fn drop(&mut self) {
         // Synchronizes with other senders.
         if self.handle.senders.fetch_sub(1, Ordering::AcqRel) == 1 {
-            // A full memory barrier is necessary to ensure updating senders
-            // happens before waking receivers.
             #[cfg(feature = "futures_api")]
-            fence(Ordering::SeqCst);
+            {
+                // A full memory barrier is necessary to ensure that updating senders
+                // happens before waking receivers.
+                fence(Ordering::SeqCst);
 
-            // Drain all items in case any has become stale.
-            #[cfg(feature = "futures_api")]
-            self.handle.waitlist.drain().for_each(Waker::wake);
+                while let Some(waker) = self.handle.waitlist.pop() {
+                    waker.wake();
+                }
+            }
 
             // Synchronizes the last sender and receiver with each other.
             if !self.handle.connected.swap(false, Ordering::AcqRel) {
@@ -128,8 +134,11 @@ impl<T> Sink<T> for RingSender<T> {
 #[derive(Derivative)]
 #[derivative(Debug(bound = ""), Eq(bound = ""), PartialEq(bound = ""))]
 pub struct RingReceiver<T> {
-    #[derivative(Debug = "ignore")]
     handle: ManuallyDrop<ControlBlockRef<T>>,
+
+    #[cfg(feature = "futures_api")]
+    #[derivative(PartialEq = "ignore")]
+    slot: Slot,
 }
 
 unsafe impl<T: Send> Send for RingReceiver<T> {}
@@ -137,7 +146,12 @@ unsafe impl<T: Send> Sync for RingReceiver<T> {}
 
 impl<T> RingReceiver<T> {
     fn new(handle: ManuallyDrop<ControlBlockRef<T>>) -> Self {
-        Self { handle }
+        Self {
+            #[cfg(feature = "futures_api")]
+            slot: handle.waitlist.register(),
+
+            handle,
+        }
     }
 
     /// Receives a message through the channel (requires [feature] `"futures_api"`).
@@ -182,6 +196,14 @@ impl<T> Clone for RingReceiver<T> {
 
 impl<T> Drop for RingReceiver<T> {
     fn drop(&mut self) {
+        #[cfg(feature = "futures_api")]
+        if self.handle.waitlist.deregister(self.slot).is_none() {
+            // Wake some other receiver in case we have been woken in the meantime.
+            if let Some(waker) = self.handle.waitlist.pop() {
+                waker.wake();
+            }
+        }
+
         // Synchronizes with other receivers.
         if self.handle.receivers.fetch_sub(1, Ordering::AcqRel) == 1 {
             // Synchronizes the last sender and receiver with each other.
@@ -201,17 +223,25 @@ impl<T> Stream for RingReceiver<T> {
 
     fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.try_recv() {
-            res @ Ok(_) | res @ Err(TryRecvError::Disconnected) => Poll::Ready(res.ok()),
-            Err(TryRecvError::Empty) => {
-                self.handle.waitlist.push(ctx.waker().clone());
+            result @ Ok(_) | result @ Err(TryRecvError::Disconnected) => {
+                self.handle.waitlist.remove(self.slot);
+                Poll::Ready(result.ok())
+            }
 
-                // A full memory barrier is necessary to ensure registering the waker
+            Err(TryRecvError::Empty) => {
+                self.handle.waitlist.insert(self.slot, ctx.waker().clone());
+
+                // A full memory barrier is necessary to ensure that storing the waker
                 // happens before attempting to retrieve a message from the buffer.
                 fence(Ordering::SeqCst);
 
                 // Look at the buffer again in case a new message has been sent in the meantime.
                 match self.try_recv() {
-                    res @ Ok(_) | res @ Err(TryRecvError::Disconnected) => Poll::Ready(res.ok()),
+                    result @ Ok(_) | result @ Err(TryRecvError::Disconnected) => {
+                        self.handle.waitlist.remove(self.slot);
+                        Poll::Ready(result.ok())
+                    }
+
                     Err(TryRecvError::Empty) => Poll::Pending,
                 }
             }
@@ -287,19 +317,35 @@ pub fn ring_channel<T>(capacity: NonZeroUsize) -> (RingSender<T>, RingReceiver<T
 mod tests {
     use super::*;
     use crate::Void;
-    use alloc::{string::String, vec::Vec};
+    use alloc::vec::Vec;
     use core::{cmp::min, iter};
     use futures::stream::{iter, repeat};
     use futures::{future::try_join_all, prelude::*};
+    use proptest::collection::size_range;
     use test_strategy::proptest;
     use tokio::runtime;
     use tokio::task::spawn_blocking;
 
     #[cfg(feature = "futures_api")]
-    use futures::{future::try_join, task::noop_waker_ref};
+    use core::time::Duration;
 
     #[cfg(feature = "futures_api")]
-    use tokio::task::spawn;
+    use alloc::{sync::Arc, task::Wake};
+
+    #[cfg(feature = "futures_api")]
+    use futures::future::try_join;
+
+    #[cfg(feature = "futures_api")]
+    use tokio::{task::spawn, time::timeout};
+
+    #[cfg(feature = "futures_api")]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    struct MockWaker;
+
+    #[cfg(feature = "futures_api")]
+    impl Wake for MockWaker {
+        fn wake(self: Arc<Self>) {}
+    }
 
     #[proptest]
     fn ring_channel_is_associated_with_a_single_control_block() {
@@ -317,6 +363,14 @@ mod tests {
         assert_ne!(s1, s2);
     }
 
+    #[cfg(feature = "futures_api")]
+    #[proptest]
+    fn senders_are_equal_even_if_backoff_is_different() {
+        let (mut tx, _) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        tx.backoff = true;
+        assert_eq!(tx, tx.clone());
+    }
+
     #[proptest]
     fn receivers_are_equal_if_they_are_associated_with_the_same_ring_channel() {
         let (_, r1) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
@@ -329,20 +383,35 @@ mod tests {
 
     #[proptest]
     fn cloning_sender_increments_senders() {
-        let (tx, _rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        let (tx, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
-        let x = tx.clone();
-        assert_eq!(x.handle.senders.load(Ordering::SeqCst), 2);
-        assert_eq!(x.handle.receivers.load(Ordering::SeqCst), 1);
+        let tx = tx.clone();
+        assert_eq!(tx.handle.senders.load(Ordering::SeqCst), 2);
+        assert_eq!(rx.handle.receivers.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(feature = "futures_api")]
+    #[proptest]
+    fn cloning_sender_resets_backoff_flag() {
+        let (mut tx, _) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        tx.backoff = true;
+        assert_ne!(tx.clone().backoff, tx.backoff);
     }
 
     #[proptest]
     fn cloning_receiver_increments_receivers_counter() {
-        let (_tx, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        let (tx, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         #[allow(clippy::redundant_clone)]
-        let x = rx.clone();
-        assert_eq!(x.handle.senders.load(Ordering::SeqCst), 1);
-        assert_eq!(x.handle.receivers.load(Ordering::SeqCst), 2);
+        let rx = rx.clone();
+        assert_eq!(tx.handle.senders.load(Ordering::SeqCst), 1);
+        assert_eq!(rx.handle.receivers.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(feature = "futures_api")]
+    #[proptest]
+    fn cloning_receiver_registers_waitlist_slot() {
+        let (_, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        assert_ne!(rx.clone().slot, rx.slot);
     }
 
     #[proptest]
@@ -357,6 +426,15 @@ mod tests {
         let (tx, _) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
         assert_eq!(tx.handle.senders.load(Ordering::SeqCst), 1);
         assert_eq!(tx.handle.receivers.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(feature = "futures_api")]
+    #[proptest]
+    fn dropping_receiver_deregisters_waitlist_slot() {
+        let (tx, rx) = ring_channel::<Void>(NonZeroUsize::try_from(1)?);
+        assert_eq!(tx.handle.waitlist.len(), 1);
+        drop(rx);
+        assert_eq!(tx.handle.waitlist.len(), 0);
     }
 
     #[proptest]
@@ -388,7 +466,7 @@ mod tests {
     #[proptest]
     fn send_succeeds_on_connected_channel(
         #[strategy(1..=10usize)] cap: usize,
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, _rx) = ring_channel(NonZeroUsize::try_from(cap)?);
@@ -402,44 +480,42 @@ mod tests {
     #[proptest]
     fn send_fails_on_disconnected_channel(
         #[strategy(1..=10usize)] cap: usize,
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, _) = ring_channel(NonZeroUsize::try_from(cap)?);
 
         rt.block_on(iter(msgs).map(Ok).try_for_each_concurrent(None, |msg| {
             let mut tx = tx.clone();
-            spawn_blocking(move || {
-                assert_eq!(tx.send(msg.clone()), Err(SendError::Disconnected(msg)))
-            })
+            spawn_blocking(move || assert_eq!(tx.send(msg), Err(SendError::Disconnected(msg))))
         }))?;
     }
 
     #[proptest]
     fn send_overwrites_old_messages(
         #[strategy(1..=10usize)] cap: usize,
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(#cap..=10).lift())] msgs: Vec<u8>,
     ) {
         let (mut tx, rx) = ring_channel(NonZeroUsize::try_from(cap)?);
         let overwritten = msgs.len() - min(msgs.len(), cap);
 
-        for msg in msgs.iter().take(cap) {
-            assert_eq!(tx.send(msg.clone()), Ok(None));
+        for &msg in &msgs[..cap] {
+            assert_eq!(tx.send(msg), Ok(None));
         }
 
-        for (msg, old) in msgs.iter().skip(cap).zip(&msgs) {
-            assert_eq!(tx.send(msg.clone()), Ok(Some(old.clone())));
+        for (&prev, &msg) in msgs.iter().zip(&msgs[cap..]) {
+            assert_eq!(tx.send(msg), Ok(Some(prev)));
         }
 
         assert_eq!(
             iter::from_fn(|| rx.handle.buffer.pop()).collect::<Vec<_>>(),
-            msgs.into_iter().skip(overwritten).collect::<Vec<_>>()
+            &msgs[overwritten..]
         );
     }
 
     #[proptest]
     fn try_recv_succeeds_on_non_empty_connected_channel(
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -463,7 +539,7 @@ mod tests {
 
     #[proptest]
     fn try_recv_succeeds_on_non_empty_disconnected_channel(
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (_, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -526,7 +602,7 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_succeeds_on_non_empty_connected_channel(
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -551,7 +627,7 @@ mod tests {
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_succeeds_on_non_empty_disconnected_channel(
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (_, rx) = ring_channel(NonZeroUsize::try_from(msgs.len())?);
@@ -593,58 +669,62 @@ mod tests {
     }
 
     #[cfg(feature = "futures_api")]
-    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
     fn recv_wakes_on_disconnect(
         #[strategy(1..=10usize)] m: usize,
         #[strategy(1..=10usize)] n: usize,
     ) {
-        let rt = runtime::Builder::new_multi_thread().build()?;
+        let rt = runtime::Builder::new_multi_thread().enable_time().build()?;
         let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
-        rt.block_on(try_join(
-            repeat(rx)
-                .take(m)
-                .map(Ok)
-                .try_for_each_concurrent(None, |mut rx| {
-                    spawn_blocking(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
-                }),
-            repeat(tx)
-                .take(n)
-                .map(Ok)
-                .try_for_each_concurrent(None, |tx| spawn_blocking(move || drop(tx))),
-        ))?;
+        let producer = repeat(tx)
+            .take(m)
+            .map(Ok)
+            .try_for_each_concurrent(None, |tx| spawn_blocking(move || drop(tx)));
+
+        let consumer = repeat(rx)
+            .take(n)
+            .map(Ok)
+            .try_for_each_concurrent(None, |mut rx| {
+                spawn_blocking(move || assert_eq!(rx.recv(), Err(RecvError::Disconnected)))
+            });
+
+        rt.block_on(async move {
+            timeout(Duration::from_secs(60), try_join(consumer, producer)).await
+        })??;
     }
 
     #[cfg(feature = "futures_api")]
-    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
     fn recv_wakes_on_send(#[strategy(1..=10usize)] n: usize) {
-        let rt = runtime::Builder::new_multi_thread().build()?;
+        let rt = runtime::Builder::new_multi_thread().enable_time().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(n)?);
         let _prevent_disconnection = tx.clone();
 
-        rt.block_on(try_join(
-            repeat(rx)
-                .take(n)
-                .map(Ok)
-                .try_for_each_concurrent(None, |mut rx| {
-                    spawn_blocking(move || assert_eq!(rx.recv(), Ok(())))
-                }),
-            repeat(tx)
-                .take(n)
-                .map(Ok)
-                .try_for_each_concurrent(None, |mut tx| {
-                    spawn_blocking(move || assert!(tx.send(()).is_ok()))
-                }),
-        ))?;
+        let producer = repeat(tx)
+            .take(n)
+            .map(Ok)
+            .try_for_each_concurrent(None, |mut tx| {
+                spawn_blocking(move || assert!(tx.send(()).is_ok()))
+            });
+
+        let consumer = repeat(rx)
+            .take(n)
+            .map(Ok)
+            .try_for_each_concurrent(None, |mut rx| {
+                spawn_blocking(move || assert_eq!(rx.recv(), Ok(())))
+            });
+
+        rt.block_on(async move {
+            timeout(Duration::from_secs(60), try_join(consumer, producer)).await
+        })??;
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn sender_implements_sink(
         #[strategy(1..=10usize)] cap: usize,
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (mut tx, mut rx) = ring_channel(NonZeroUsize::try_from(cap)?);
@@ -655,8 +735,8 @@ mod tests {
         drop(tx); // hang-up
 
         assert_eq!(
-            iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>(),
-            msgs.iter().skip(overwritten).collect::<Vec<_>>()
+            iter::from_fn(|| rx.try_recv().ok().copied()).collect::<Vec<_>>(),
+            &msgs[overwritten..]
         );
     }
 
@@ -678,88 +758,126 @@ mod tests {
         let (mut tx, _) = ring_channel::<()>(NonZeroUsize::try_from(cap)?);
         tx.backoff = true;
 
-        assert_eq!(
-            Pin::new(&mut tx).poll_ready(&mut Context::from_waker(noop_waker_ref())),
-            Poll::Pending
-        );
+        let waker = Arc::new(MockWaker).into();
+        let mut ctx = Context::from_waker(&waker);
 
+        assert_eq!(Pin::new(&mut tx).poll_ready(&mut ctx), Poll::Pending);
         assert!(!tx.backoff);
-
-        assert_eq!(
-            Pin::new(&mut tx).poll_ready(&mut Context::from_waker(noop_waker_ref())),
-            Poll::Ready(Ok(()))
-        );
+        assert_eq!(Pin::new(&mut tx).poll_ready(&mut ctx), Poll::Ready(Ok(())));
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn receiver_implements_stream(
         #[strategy(1..=10usize)] cap: usize,
-        #[any(((1..=10).into(), "[[:ascii:]]".into()))] msgs: Vec<String>,
+        #[any(size_range(1..=10).lift())] msgs: Vec<u8>,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let (mut tx, rx) = ring_channel(NonZeroUsize::try_from(cap)?);
         let overwritten = msgs.len() - min(msgs.len(), cap);
 
-        for msg in &msgs {
-            assert!(tx.send(msg.clone()).is_ok());
+        for &msg in &msgs {
+            assert!(tx.send(msg).is_ok());
         }
 
         drop(tx); // hang-up
 
-        assert_eq!(
-            rt.block_on(rx.collect::<Vec<_>>()),
-            msgs.into_iter().skip(overwritten).collect::<Vec<_>>()
-        );
+        assert_eq!(rt.block_on(rx.collect::<Vec<_>>()), &msgs[overwritten..]);
     }
 
     #[cfg(feature = "futures_api")]
-    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
+    #[cfg(not(miri))] // will_wake sometimes returns false under miri
+    #[proptest]
+    fn receiver_stores_most_recent_waker_if_channel_is_empty(#[strategy(1..=10usize)] cap: usize) {
+        let (_tx, mut rx) = ring_channel::<()>(NonZeroUsize::try_from(cap)?);
+
+        let a = Arc::new(MockWaker).into();
+        let mut ctx = Context::from_waker(&a);
+
+        assert_eq!(Pin::new(&mut rx).poll_next(&mut ctx), Poll::Pending);
+        assert!(rx.handle.waitlist.get(rx.slot).unwrap().will_wake(&a));
+
+        let b = Arc::new(MockWaker).into();
+        let mut ctx = Context::from_waker(&b);
+
+        assert_eq!(Pin::new(&mut rx).poll_next(&mut ctx), Poll::Pending);
+        assert!(!rx.handle.waitlist.get(rx.slot).unwrap().will_wake(&a));
+        assert!(rx.handle.waitlist.get(rx.slot).unwrap().will_wake(&b));
+    }
+
+    #[cfg(feature = "futures_api")]
+    #[cfg(not(miri))] // will_wake sometimes returns false under miri
+    #[proptest]
+    fn receiver_withdraws_waker_if_channel_not_empty(#[strategy(1..=10usize)] cap: usize, msg: u8) {
+        let (mut tx, mut rx) = ring_channel(NonZeroUsize::try_from(cap)?);
+
+        let waker = Arc::new(MockWaker).into();
+        let mut ctx = Context::from_waker(&waker);
+
+        assert_eq!(Pin::new(&mut rx).poll_next(&mut ctx), Poll::Pending);
+        assert!(rx.handle.waitlist.get(rx.slot).unwrap().will_wake(&waker));
+
+        assert_eq!(tx.send(&msg), Ok(None));
+
+        assert_eq!(
+            Pin::new(&mut rx).poll_next(&mut ctx),
+            Poll::Ready(Some(&msg))
+        );
+
+        assert!(rx.handle.waitlist.get(rx.slot).is_none());
+    }
+
+    #[cfg(feature = "futures_api")]
     #[proptest]
     fn stream_wakes_on_disconnect(
         #[strategy(1..=10usize)] m: usize,
         #[strategy(1..=10usize)] n: usize,
     ) {
-        let rt = runtime::Builder::new_multi_thread().build()?;
+        let rt = runtime::Builder::new_multi_thread().enable_time().build()?;
         let (tx, rx) = ring_channel::<()>(NonZeroUsize::try_from(1)?);
 
-        rt.block_on(try_join(
-            repeat(rx)
-                .take(m)
-                .map(Ok)
-                .try_for_each_concurrent(None, |mut rx| {
-                    spawn(async move { assert_eq!(rx.next().await, None) })
-                }),
-            repeat(tx)
-                .take(n)
-                .map(Ok)
-                .try_for_each_concurrent(None, |mut tx| {
-                    spawn(async move { assert_eq!(tx.close().await, Ok(())) })
-                }),
-        ))?;
+        let producer = repeat(tx)
+            .take(m)
+            .map(Ok)
+            .try_for_each_concurrent(None, |mut tx| {
+                spawn(async move { assert_eq!(tx.close().await, Ok(())) })
+            });
+
+        let consumer = repeat(rx)
+            .take(n)
+            .map(Ok)
+            .try_for_each_concurrent(None, |mut rx| {
+                spawn(async move { assert_eq!(rx.next().await, None) })
+            });
+
+        rt.block_on(async move {
+            timeout(Duration::from_secs(60), try_join(consumer, producer)).await
+        })??;
     }
 
     #[cfg(feature = "futures_api")]
-    #[cfg(not(miri))] // https://github.com/rust-lang/miri/issues/1388
     #[proptest]
     fn stream_wakes_on_sink(#[strategy(1..=10usize)] n: usize) {
-        let rt = runtime::Builder::new_multi_thread().build()?;
+        let rt = runtime::Builder::new_multi_thread().enable_time().build()?;
         let (tx, rx) = ring_channel(NonZeroUsize::try_from(n)?);
         let _prevent_disconnection = tx.clone();
 
-        rt.block_on(try_join(
-            repeat(rx)
-                .take(n)
-                .map(Ok)
-                .try_for_each_concurrent(None, |mut rx| {
-                    spawn(async move { assert_eq!(rx.next().await, Some(())) })
-                }),
-            repeat(tx)
-                .take(n)
-                .map(Ok)
-                .try_for_each_concurrent(None, |tx| {
-                    spawn(async move { assert_eq!(iter(Some(Ok(()))).forward(tx).await, Ok(())) })
-                }),
-        ))?;
+        let producer = repeat(tx)
+            .take(n)
+            .map(Ok)
+            .try_for_each_concurrent(None, |tx| {
+                spawn(async move { assert_eq!(iter(Some(Ok(()))).forward(tx).await, Ok(())) })
+            });
+
+        let consumer = repeat(rx)
+            .take(n)
+            .map(Ok)
+            .try_for_each_concurrent(None, |mut rx| {
+                spawn(async move { assert_eq!(rx.next().await, Some(())) })
+            });
+
+        rt.block_on(async move {
+            timeout(Duration::from_secs(60), try_join(consumer, producer)).await
+        })??;
     }
 }
