@@ -1,9 +1,12 @@
+use crate::atomic::AtomicOption;
 use alloc::boxed::Box;
 use core::sync::atomic::{self, AtomicUsize, Ordering};
 use core::{cell::UnsafeCell, mem::MaybeUninit};
-use crossbeam_utils::{atomic::AtomicCell, Backoff, CachePadded};
+use crossbeam_utils::{Backoff, CachePadded};
 use derivative::Derivative;
 
+#[derive(Derivative)]
+#[derivative(Debug(bound = ""))]
 struct Slot<T> {
     // If the stamp equals the tail, this node will be next written to.
     // If it equals head + 1, this node will be next read from.
@@ -20,19 +23,21 @@ impl<T> Slot<T> {
     }
 }
 
-pub struct CircularQueue<T> {
+#[derive(Derivative)]
+#[derivative(Debug(bound = ""))]
+pub struct AtomicQueue<T> {
     head: CachePadded<AtomicUsize>,
     tail: CachePadded<AtomicUsize>,
     buffer: Box<[CachePadded<Slot<T>>]>,
     lap: usize,
 }
 
-unsafe impl<T: Send> Sync for CircularQueue<T> {}
-unsafe impl<T: Send> Send for CircularQueue<T> {}
+unsafe impl<T: Send> Sync for AtomicQueue<T> {}
+unsafe impl<T: Send> Send for AtomicQueue<T> {}
 
-impl<T> CircularQueue<T> {
-    fn new(capacity: usize) -> CircularQueue<T> {
-        CircularQueue {
+impl<T> AtomicQueue<T> {
+    fn new(capacity: usize) -> AtomicQueue<T> {
+        AtomicQueue {
             buffer: (0..capacity).map(Slot::new).map(CachePadded::new).collect(),
             head: Default::default(),
             tail: Default::default(),
@@ -177,7 +182,7 @@ impl<T> CircularQueue<T> {
     }
 }
 
-impl<T> Drop for CircularQueue<T> {
+impl<T> Drop for AtomicQueue<T> {
     fn drop(&mut self) {
         let mut cursor = self.head.load(Ordering::Relaxed);
         let end = self.tail.load(Ordering::Relaxed);
@@ -192,49 +197,45 @@ impl<T> Drop for CircularQueue<T> {
 }
 
 #[derive(Derivative)]
-#[derivative(Debug)]
+#[derivative(Debug(bound = ""))]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum RingBuffer<T> {
-    Atomic(#[derivative(Debug = "ignore")] AtomicCell<Option<T>>),
-    Boxed(#[derivative(Debug = "ignore")] AtomicCell<Option<Box<T>>>),
-    Queue(#[derivative(Debug = "ignore")] CircularQueue<T>),
+    Atomic(AtomicOption<T>),
+    Queue(AtomicQueue<T>),
 }
 
 impl<T> RingBuffer<T> {
     pub(super) fn new(capacity: usize) -> Self {
         assert!(capacity > 0, "capacity must be non-zero");
 
-        if capacity == 1 && AtomicCell::<Option<T>>::is_lock_free() {
-            RingBuffer::Atomic(AtomicCell::new(None))
-        } else if capacity == 1 {
-            debug_assert!(AtomicCell::<Option<Box<T>>>::is_lock_free());
-            RingBuffer::Boxed(AtomicCell::new(None))
+        if capacity == 1 {
+            RingBuffer::Atomic(Default::default())
         } else {
-            RingBuffer::Queue(CircularQueue::new(capacity))
+            RingBuffer::Queue(AtomicQueue::new(capacity))
         }
     }
 
     #[cfg(test)]
+    #[inline]
     pub(super) fn capacity(&self) -> usize {
         match self {
             RingBuffer::Atomic(_) => 1,
-            RingBuffer::Boxed(_) => 1,
             RingBuffer::Queue(q) => q.capacity(),
         }
     }
 
+    #[inline]
     pub(super) fn push(&self, value: T) -> Option<T> {
         match self {
-            RingBuffer::Atomic(c) => c.swap(Some(value)),
-            RingBuffer::Boxed(b) => Some(*b.swap(Some(Box::new(value)))?),
+            RingBuffer::Atomic(c) => c.swap(value),
             RingBuffer::Queue(q) => q.push_or_swap(value),
         }
     }
 
+    #[inline]
     pub(super) fn pop(&self) -> Option<T> {
         match self {
             RingBuffer::Atomic(c) => c.take(),
-            RingBuffer::Boxed(b) => Some(*b.take()?),
             RingBuffer::Queue(q) => q.pop(),
         }
     }
@@ -258,38 +259,27 @@ mod tests {
     }
 
     #[proptest]
-    fn new_uses_atomic_cell_when_capacity_is_one() {
+    fn atomic_option_is_used_when_capacity_is_one() {
         assert_eq!(
-            discriminant(&RingBuffer::<[char; 1]>::new(1)),
+            discriminant(&RingBuffer::<Void>::new(1)),
             discriminant(&RingBuffer::Atomic(Default::default()))
         );
 
         assert_eq!(
-            discriminant(&RingBuffer::<[char; 1]>::new(2)),
-            discriminant(&RingBuffer::Queue(CircularQueue::new(2)))
-        );
-
-        assert_eq!(
-            discriminant(&RingBuffer::<[char; 4]>::new(1)),
-            discriminant(&RingBuffer::Boxed(Default::default()))
-        );
-
-        assert_eq!(
-            discriminant(&RingBuffer::<[char; 4]>::new(2)),
-            discriminant(&RingBuffer::Queue(CircularQueue::new(2)))
+            discriminant(&RingBuffer::<Void>::new(2)),
+            discriminant(&RingBuffer::Queue(AtomicQueue::new(2)))
         );
     }
 
     #[proptest]
     fn capacity_returns_the_maximum_buffer_size(#[strategy(1..=10usize)] cap: usize) {
-        assert_eq!(RingBuffer::<[char; 1]>::new(cap).capacity(), cap);
-        assert_eq!(RingBuffer::<[char; 4]>::new(cap).capacity(), cap);
+        assert_eq!(RingBuffer::<Void>::new(cap).capacity(), cap);
     }
 
     #[proptest]
     fn oldest_items_are_overwritten_on_overflow(
         #[strategy(1..=10usize)] cap: usize,
-        #[any(size_range(#cap..=10).lift())] items: Vec<char>,
+        #[any(size_range(#cap..=10).lift())] items: Vec<u8>,
     ) {
         let buffer = RingBuffer::new(cap);
 
@@ -297,8 +287,8 @@ mod tests {
             assert_eq!(buffer.push(item), None);
         }
 
-        for (i, &item) in (0..(items.len() - cap)).zip(&items[cap..]) {
-            assert_eq!(buffer.push(item), Some(items[i]));
+        for (&prev, &item) in items.iter().zip(&items[cap..]) {
+            assert_eq!(buffer.push(item), Some(prev));
         }
 
         assert_eq!(
@@ -310,16 +300,21 @@ mod tests {
     #[proptest]
     fn buffer_is_linearizable(
         #[strategy(1..=10usize)] n: usize,
+        #[strategy(1..=10usize)] m: usize,
         #[strategy(1..=10usize)] cap: usize,
     ) {
         let rt = runtime::Builder::new_multi_thread().build()?;
         let buffer = Arc::new(RingBuffer::new(cap));
 
         let items = rt.block_on(async {
-            try_join_all(iter::repeat(buffer).enumerate().take(n).map(|(i, b)| {
-                spawn_blocking(move || match b.push(i) {
-                    None => b.pop(),
-                    item => item,
+            try_join_all(iter::repeat(buffer).enumerate().take(m).map(|(i, b)| {
+                spawn_blocking(move || {
+                    (i * n..(i + 1) * n)
+                        .flat_map(|j| match b.push(j) {
+                            None => b.pop(),
+                            item => item,
+                        })
+                        .collect::<Vec<_>>()
                 })
             }))
             .await
@@ -331,6 +326,6 @@ mod tests {
             .collect::<BinaryHeap<_>>()
             .into_sorted_vec();
 
-        assert_eq!(sorted, (0..n).collect::<Vec<_>>());
+        assert_eq!(sorted, (0..m * n).collect::<Vec<_>>());
     }
 }

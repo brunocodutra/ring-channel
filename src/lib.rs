@@ -182,6 +182,7 @@ extern crate alloc;
 #[cfg_attr(test, macro_use)]
 extern crate std;
 
+mod atomic;
 mod buffer;
 mod channel;
 mod control;
