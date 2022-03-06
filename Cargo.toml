@@ -1,6 +1,6 @@
 [package]
 name = "ring-channel"
-version = "0.10.1"
+version = "0.11.0"
 edition = "2021"
 authors = ["Bruno Dutra <brunocodutra@gmail.com>"]
 description = "Bounded MPMC channel abstraction on top of a ring buffer"
