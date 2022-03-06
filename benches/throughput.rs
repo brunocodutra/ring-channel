@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin))]
+
 use criterion::measurement::{Measurement, WallTime};
 use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use futures::future::{try_join, try_join_all};
