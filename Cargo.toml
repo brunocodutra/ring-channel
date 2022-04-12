@@ -16,13 +16,14 @@ all-features = true
 
 [features]
 default = ["std", "futures_api"]
-std = ["crossbeam-utils/std", "futures/std", "slotmap/std", "spin/std"]
+std = ["crossbeam-queue/std", "crossbeam-utils/std", "futures/std", "slotmap/std", "spin/std"]
 futures_api = ["futures", "slotmap", "spin"]
 
 [badges]
 codecov = { repository = "brunocodutra/ring-channel" }
 
 [dependencies]
+crossbeam-queue = { version = "0.3.4", default-features = false, features = ["alloc"] }
 crossbeam-utils = { version = "0.8.7", default-features = false }
 derivative = { version = "2.2.0", default-features = false, features = ["use_core"] }
 futures = { version = "0.3.21", default-features = false, features = ["executor"], optional = true }
