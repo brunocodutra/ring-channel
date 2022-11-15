@@ -5,7 +5,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Thro
 use futures::future::{try_join, try_join_all};
 use futures::prelude::*;
 use ring_channel::{ring_channel, RingReceiver, RingSender, TryRecvError};
-use std::{collections::BTreeSet, fmt::Debug, hint::spin_loop, iter, mem::size_of, time::Duration};
+use std::{collections::BTreeSet, fmt::Debug, hint, iter, mem::size_of, thread, time::Duration};
 use tokio::runtime::Runtime;
 use tokio::task::{self, JoinHandle};
 
@@ -83,7 +83,7 @@ impl<T: 'static + Send + Default> Routine<T> for Block {
             match rx.try_recv() {
                 Ok(m) => return Some(m),
                 Err(TryRecvError::Disconnected) => return None,
-                Err(TryRecvError::Empty) => spin_loop(),
+                Err(TryRecvError::Empty) => hint::spin_loop(),
             }
         });
 
@@ -93,7 +93,7 @@ impl<T: 'static + Send + Default> Routine<T> for Block {
 
 fn mpmc(c: &mut Criterion) {
     let mut group = c.benchmark_group("mpmc");
-    let concurrency = (num_cpus::get() / 2).max(2);
+    let concurrency = (thread::available_parallelism().unwrap().get() / 2).max(2);
 
     #[cfg(feature = "futures_api")]
     {
@@ -109,7 +109,7 @@ fn mpmc(c: &mut Criterion) {
 
 fn mpsc(c: &mut Criterion) {
     let mut group = c.benchmark_group("mpsc");
-    let concurrency = (num_cpus::get() - 1).max(2);
+    let concurrency = (thread::available_parallelism().unwrap().get() - 1).max(2);
 
     #[cfg(feature = "futures_api")]
     {
@@ -125,7 +125,7 @@ fn mpsc(c: &mut Criterion) {
 
 fn spmc(c: &mut Criterion) {
     let mut group = c.benchmark_group("spmc");
-    let concurrency = (num_cpus::get() - 1).max(2);
+    let concurrency = (thread::available_parallelism().unwrap().get() - 1).max(2);
 
     #[cfg(feature = "futures_api")]
     {
