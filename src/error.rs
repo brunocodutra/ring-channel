@@ -92,26 +92,17 @@ mod tests {
 
     #[proptest]
     fn send_error_implements_error_trait(err: SendError<()>) {
-        assert_eq!(
-            format!("{}", err),
-            format!("{}", Box::<dyn Error>::from(err))
-        );
+        assert_eq!(format!("{err}"), format!("{}", Box::<dyn Error>::from(err)));
     }
 
     #[cfg(feature = "futures_api")]
     #[proptest]
     fn recv_error_implements_error_trait(err: RecvError) {
-        assert_eq!(
-            format!("{}", err),
-            format!("{}", Box::<dyn Error>::from(err))
-        );
+        assert_eq!(format!("{err}"), format!("{}", Box::<dyn Error>::from(err)));
     }
 
     #[proptest]
     fn try_recv_error_implements_error_trait(err: TryRecvError) {
-        assert_eq!(
-            format!("{}", err),
-            format!("{}", Box::<dyn Error>::from(err))
-        );
+        assert_eq!(format!("{err}"), format!("{}", Box::<dyn Error>::from(err)));
     }
 }
