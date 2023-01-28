@@ -42,7 +42,7 @@ where
     group.throughput(Throughput::Elements(messages_per_iter as u64));
 
     for cap in BTreeSet::from([1, 2, p + c]) {
-        group.bench_function(format!("{}/{}", prefix, cap), |b| {
+        group.bench_function(format!("{prefix}/{cap}"), |b| {
             b.to_async(Runtime::new().unwrap())
                 .iter_custom(|iters| run::<R, N>(iters as usize * messages_per_iter, cap, p, c));
         });
