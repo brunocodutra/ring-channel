@@ -73,12 +73,12 @@ impl<T: 'static + Send + Default> Routine<T> for Async {
 struct Block;
 
 impl<T: 'static + Send + Default> Routine<T> for Block {
-    fn produce(mut tx: RingSender<T>, limit: usize) -> JoinHandle<usize> {
+    fn produce(tx: RingSender<T>, limit: usize) -> JoinHandle<usize> {
         let producer = iter::from_fn(move || tx.send(T::default()).ok());
         task::spawn_blocking(move || producer.take(limit).count())
     }
 
-    fn consume(mut rx: RingReceiver<T>, limit: usize) -> JoinHandle<usize> {
+    fn consume(rx: RingReceiver<T>, limit: usize) -> JoinHandle<usize> {
         let consumer = iter::from_fn(move || loop {
             match rx.try_recv() {
                 Ok(m) => return Some(m),
