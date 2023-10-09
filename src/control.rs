@@ -71,7 +71,7 @@ impl<T> Drop for ControlBlockRef<T> {
         debug_assert_eq!(self.senders.load(Ordering::SeqCst), 0);
         debug_assert_eq!(self.receivers.load(Ordering::SeqCst), 0);
 
-        unsafe { Box::from_raw(&**self as *const ControlBlock<T> as *mut ControlBlock<T>) };
+        unsafe { drop(Box::from_raw(self.0.as_mut() as *mut ControlBlock<T>)) };
     }
 }
 
