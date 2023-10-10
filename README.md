@@ -8,7 +8,7 @@ RingChannel is available on [crates.io], simply add it as a dependency in your `
 
 ```
 [dependencies]
-ring-channel = "0.11"
+ring-channel = "0.12"
 ```
 
 The full API documentation is available on [docs.rs][docs.home]
