@@ -1,4 +1,3 @@
-#![cfg(not(tarpaulin))]
 #![no_main]
 
 use futures::{future::*, prelude::*, stream::*};
